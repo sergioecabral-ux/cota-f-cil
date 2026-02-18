@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import Topbar from "@/components/Topbar";
@@ -17,7 +18,8 @@ const ACCEPT_ZIP = ".zip";
 
 const ImportarEvidencias = () => {
   const queryClient = useQueryClient();
-  const [eventId, setEventId] = useState<string>("");
+  const [searchParams] = useSearchParams();
+  const [eventId, setEventId] = useState<string>(searchParams.get("eventId") || "");
   const [supplierId, setSupplierId] = useState<string>("none");
   const [textContent, setTextContent] = useState("");
   const [dragOver, setDragOver] = useState(false);
