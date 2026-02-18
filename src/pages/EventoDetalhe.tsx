@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import Topbar from "@/components/Topbar";
+import RevisaoTab from "@/components/RevisaoTab";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -31,26 +32,7 @@ const severityBadge: Record<string, string> = {
   normal: "bg-muted text-muted-foreground border-border",
 };
 
-// --- Revisão tab types ---
-interface QuoteRow {
-  id: string;
-  supplier_id: string;
-  evidence_id: string;
-  lead_time_days: number | null;
-  shipping_terms: string | null;
-  shipping_cost: number | null;
-  minimum_order_value: number | null;
-  minimum_order_qty: number | null;
-  payment_terms: string | null;
-  validity_days: number | null;
-}
-
-interface SupplierGroup {
-  supplier_id: string;
-  supplier_name: string;
-  quotes: QuoteRow[];
-}
-
+// --- Review modal types ---
 interface ReviewItem {
   id: string;
   severity: string;
@@ -71,18 +53,6 @@ interface ReviewItem {
   };
 }
 
-const EDITABLE_FIELDS = [
-  { key: "lead_time_days", label: "Prazo (dias)", type: "number" },
-  { key: "shipping_terms", label: "Frete (termos)", type: "text" },
-  { key: "shipping_cost", label: "Frete (R$)", type: "number" },
-  { key: "minimum_order_value", label: "Ped. mín. (R$)", type: "number" },
-  { key: "minimum_order_qty", label: "Ped. mín. (qtd)", type: "number" },
-  { key: "payment_terms", label: "Pagamento", type: "text" },
-  { key: "validity_days", label: "Validade (dias)", type: "number" },
-] as const;
-
-type EditableFieldKey = (typeof EDITABLE_FIELDS)[number]["key"];
-
 const REASON_MAP: Record<string, (q: Record<string, any>) => boolean> = {
   "Prazo de entrega ausente": (q) => q.lead_time_days != null,
   "Frete ausente": (q) => q.shipping_terms != null || q.shipping_cost != null,
@@ -95,8 +65,6 @@ const EventoDetalhe = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [viewEvidence, setViewEvidence] = useState<any | null>(null);
-  const [editingCell, setEditingCell] = useState<{ quoteId: string; field: string } | null>(null);
-  const [editValue, setEditValue] = useState("");
   const [showCriticasModal, setShowCriticasModal] = useState(false);
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
   const [resolvedItems, setResolvedItems] = useState<Set<string>>(new Set());
@@ -236,42 +204,7 @@ const EventoDetalhe = () => {
     enabled: !!id,
   });
 
-  // Fetch quotes grouped by supplier for Revisão tab
-  const { data: supplierGroups } = useQuery({
-    queryKey: ["event-quotes-grouped", id],
-    queryFn: async () => {
-      const { data: quotes, error } = await supabase
-        .from("quotes")
-        .select("id, supplier_id, evidence_id, lead_time_days, shipping_terms, shipping_cost, minimum_order_value, minimum_order_qty, payment_terms, validity_days")
-        .eq("event_id", id!)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      if (!quotes || quotes.length === 0) return [] as SupplierGroup[];
-
-      const sIds = [...new Set(quotes.map((q) => q.supplier_id))];
-      const { data: suppliers } = await supabase
-        .from("suppliers")
-        .select("id, name_raw")
-        .in("id", sIds);
-      const sMap: Record<string, string> = {};
-      suppliers?.forEach((s) => (sMap[s.id] = s.name_raw));
-
-      const groups: Record<string, SupplierGroup> = {};
-      quotes.forEach((q) => {
-        if (!groups[q.supplier_id]) {
-          groups[q.supplier_id] = {
-            supplier_id: q.supplier_id,
-            supplier_name: sMap[q.supplier_id] || "Desconhecido",
-            quotes: [],
-          };
-        }
-        groups[q.supplier_id].quotes.push(q);
-      });
-
-      return Object.values(groups);
-    },
-    enabled: !!id,
-  });
+  // (Revisão tab moved to RevisaoTab component)
 
   // Reprocess single evidence
   const reprocessMutation = useMutation({
@@ -301,7 +234,7 @@ const EventoDetalhe = () => {
 
       const { data: toProcess, error } = await supabase
         .from("evidence")
-        .select("id, supplier_id")
+        .select("id, supplier_id, created_at, kind")
         .eq("event_id", id)
         .in("kind", ["image", "pdf", "text"])
         .eq("functional_label", "quote")
@@ -337,6 +270,9 @@ const EventoDetalhe = () => {
       for (const ev of toProcess) {
         const supplierId = ev.supplier_id || fallbackSupplierId!;
 
+        const evDate = format(new Date(ev.created_at), "dd/MM HH:mm");
+        const displayName = `Cotação ${evDate} (${ev.kind})`;
+
         const { data: quote, error: qErr } = await supabase
           .from("quotes")
           .insert({
@@ -346,6 +282,7 @@ const EventoDetalhe = () => {
             needs_review: true,
             confidence_overall: 0,
             user_id: user.id,
+            display_name: displayName,
           })
           .select("id")
           .single();
@@ -376,7 +313,8 @@ const EventoDetalhe = () => {
       queryClient.invalidateQueries({ queryKey: ["event-evidence", id] });
       queryClient.invalidateQueries({ queryKey: ["event-critical-count", id] });
       queryClient.invalidateQueries({ queryKey: ["event-high-count", id] });
-      queryClient.invalidateQueries({ queryKey: ["event-quotes-grouped", id] });
+      queryClient.invalidateQueries({ queryKey: ["revisao-quotes", id] });
+      queryClient.invalidateQueries({ queryKey: ["revisao-items", id] });
       queryClient.invalidateQueries({ queryKey: ["event-review-items", id] });
       toast({ title: `${count} evidência(s) processada(s)` });
     },
@@ -460,7 +398,8 @@ const EventoDetalhe = () => {
       queryClient.invalidateQueries({ queryKey: ["event-review-items", id] });
       queryClient.invalidateQueries({ queryKey: ["event-critical-count", id] });
       queryClient.invalidateQueries({ queryKey: ["event-high-count", id] });
-      queryClient.invalidateQueries({ queryKey: ["event-quotes-grouped", id] });
+      queryClient.invalidateQueries({ queryKey: ["revisao-quotes", id] });
+      queryClient.invalidateQueries({ queryKey: ["revisao-items", id] });
       toast({ title: "Dados salvos e pendência resolvida" });
     },
     onError: (err: any) => {
@@ -468,59 +407,7 @@ const EventoDetalhe = () => {
     },
   });
 
-  // Save quote field inline
-  const saveFieldMutation = useMutation({
-    mutationFn: async ({ quoteId, field, value, oldValue }: { quoteId: string; field: EditableFieldKey; value: any; oldValue: any }) => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Não autenticado");
-
-      const { error } = await supabase
-        .from("quotes")
-        .update({ [field]: value })
-        .eq("id", quoteId);
-      if (error) throw error;
-
-      await supabase.from("audit_log").insert({
-        entity_type: "quote",
-        entity_id: quoteId,
-        field_name: field,
-        old_value: oldValue != null ? JSON.stringify(oldValue) : null,
-        new_value: value != null ? JSON.stringify(value) : null,
-        user_id: user.id,
-      });
-
-      const { data: updatedQuote } = await supabase
-        .from("quotes")
-        .select("id, lead_time_days, shipping_terms, shipping_cost, minimum_order_value, minimum_order_qty")
-        .eq("id", quoteId)
-        .single();
-
-      if (updatedQuote) {
-        for (const [reason, check] of Object.entries(REASON_MAP)) {
-          if (check(updatedQuote)) {
-            await supabase
-              .from("review_queue")
-              .update({ resolved_at: new Date().toISOString(), resolved_by: "user" })
-              .eq("entity_id", quoteId)
-              .eq("entity_type", "quote")
-              .eq("reason", reason)
-              .is("resolved_at", null);
-          }
-        }
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["event-quotes-grouped", id] });
-      queryClient.invalidateQueries({ queryKey: ["event-critical-count", id] });
-      queryClient.invalidateQueries({ queryKey: ["event-high-count", id] });
-      queryClient.invalidateQueries({ queryKey: ["event-review-items", id] });
-      setEditingCell(null);
-      toast({ title: "Salvo" });
-    },
-    onError: (err: any) => {
-      toast({ title: "Erro ao salvar", description: err.message, variant: "destructive" });
-    },
-  });
+  // (saveFieldMutation moved to RevisaoTab component)
 
   const handleView = async (ev: any) => {
     if (ev.kind === "text") {
@@ -533,30 +420,6 @@ const EventoDetalhe = () => {
     }
   };
 
-  const startEdit = (quoteId: string, field: string, currentValue: any) => {
-    setEditingCell({ quoteId, field });
-    setEditValue(currentValue != null ? String(currentValue) : "");
-  };
-
-  const commitEdit = (quote: QuoteRow) => {
-    if (!editingCell) return;
-    const fieldDef = EDITABLE_FIELDS.find((f) => f.key === editingCell.field);
-    if (!fieldDef) return;
-
-    const oldValue = quote[editingCell.field as EditableFieldKey];
-    let newValue: any = editValue.trim() === "" ? null : editValue.trim();
-    if (fieldDef.type === "number" && newValue != null) {
-      newValue = Number(newValue);
-      if (isNaN(newValue)) newValue = null;
-    }
-
-    saveFieldMutation.mutate({
-      quoteId: quote.id,
-      field: editingCell.field as EditableFieldKey,
-      value: newValue,
-      oldValue,
-    });
-  };
 
   if (isLoading) {
     return (
@@ -686,90 +549,8 @@ const EventoDetalhe = () => {
             </TabsContent>
 
             {/* Revisão tab */}
-            <TabsContent value="revisao" className="mt-4 space-y-6">
-              {/* Pendências card */}
-              {(criticalCount > 0 || highCount > 0) && (
-                <div className="rounded-xl border border-border bg-card p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <ShieldAlert className="h-5 w-5 text-destructive" />
-                    <div className="flex items-center gap-3 text-sm">
-                      <span className="font-medium text-destructive">Críticas: {criticalCount}</span>
-                      <span className="font-medium text-highlight">Altas: {highCount}</span>
-                    </div>
-                  </div>
-                  <Button variant="outline" size="sm" onClick={() => setShowCriticasModal(true)}>
-                    Ver todas
-                  </Button>
-                </div>
-              )}
-
-              {supplierGroups && supplierGroups.length > 0 ? (
-                supplierGroups.map((group) => (
-                  <div key={group.supplier_id} className="rounded-xl border border-border bg-card overflow-hidden">
-                    <div className="bg-muted/50 px-4 py-3 border-b border-border">
-                      <h3 className="text-sm font-semibold text-foreground">{group.supplier_name}</h3>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            {EDITABLE_FIELDS.map((f) => (
-                              <TableHead key={f.key} className="text-xs whitespace-nowrap">{f.label}</TableHead>
-                            ))}
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {group.quotes.map((quote) => (
-                            <TableRow key={quote.id}>
-                              {EDITABLE_FIELDS.map((f) => {
-                                const isEditing = editingCell?.quoteId === quote.id && editingCell?.field === f.key;
-                                const val = quote[f.key as EditableFieldKey];
-
-                                return (
-                                  <TableCell key={f.key} className="py-1 px-2">
-                                    {isEditing ? (
-                                      <div className="flex items-center gap-1">
-                                        <Input
-                                          type={f.type}
-                                          value={editValue}
-                                          onChange={(e) => setEditValue(e.target.value)}
-                                          onKeyDown={(e) => { if (e.key === "Enter") commitEdit(quote); if (e.key === "Escape") setEditingCell(null); }}
-                                          className="h-7 text-xs w-24"
-                                          autoFocus
-                                        />
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="h-6 w-6"
-                                          onClick={() => commitEdit(quote)}
-                                          disabled={saveFieldMutation.isPending}
-                                        >
-                                          <Check className="h-3 w-3" />
-                                        </Button>
-                                      </div>
-                                    ) : (
-                                      <button
-                                        className="text-xs text-left w-full px-1 py-0.5 rounded hover:bg-muted/50 transition-colors min-w-[60px]"
-                                        onClick={() => startEdit(quote.id, f.key, val)}
-                                      >
-                                        {val != null ? String(val) : <span className="text-muted-foreground italic">—</span>}
-                                      </button>
-                                    )}
-                                  </TableCell>
-                                );
-                              })}
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="bg-card rounded-xl border border-border shadow-card p-12 text-center">
-                  <p className="text-muted-foreground">Nenhuma cotação neste evento. Use "Processar tudo" para criar cotações a partir das evidências.</p>
-                </div>
-              )}
+            <TabsContent value="revisao" className="mt-4">
+              <RevisaoTab eventId={id!} criticalCount={criticalCount} highCount={highCount} onOpenCriticas={() => setShowCriticasModal(true)} />
             </TabsContent>
 
             {/* Comparação tab */}
