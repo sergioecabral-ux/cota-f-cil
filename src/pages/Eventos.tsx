@@ -238,7 +238,7 @@ const Eventos = () => {
                     <TableHead>Status</TableHead>
                     <TableHead>Prioridade</TableHead>
                     <TableHead>Criado em</TableHead>
-                    <TableHead>Pendências</TableHead>
+                    <TableHead>Críticas</TableHead>
                     <TableHead className="w-10"></TableHead>
                   </TableRow>
                 </TableHeader>
