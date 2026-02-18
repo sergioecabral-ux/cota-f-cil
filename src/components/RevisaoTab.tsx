@@ -235,12 +235,12 @@ export default function RevisaoTab({ eventId, criticalCount, highCount, onOpenCr
     queryClient.invalidateQueries({ queryKey: ["event-review-items", eventId] });
   }, [queryClient, eventId]);
 
-  const startQuoteEdit = (quoteId: string, field: QuoteFieldKey, value: any) => {
+  const startEditQuote = (quoteId: string, field: QuoteFieldKey, value: unknown) => {
     setEditingTarget({ kind: "quote", quoteId, field });
     setEditValue(value != null ? String(value) : "");
   };
 
-  const startItemEdit = (itemId: string, field: ItemFieldKey, value: any) => {
+  const startEditItem = (itemId: string, field: ItemFieldKey, value: unknown) => {
     setEditingTarget({ kind: "item", itemId, field });
     setEditValue(value != null ? String(value) : "");
   };
@@ -366,7 +366,7 @@ export default function RevisaoTab({ eventId, criticalCount, highCount, onOpenCr
                             </Button>
                           </div>
                         ) : (
-                          <button className="font-medium hover:text-primary transition-colors" onClick={() => startQuoteEdit(quote.id, f.key, val)}>
+                          <button className="font-medium hover:text-primary transition-colors" onClick={() => startEditQuote(quote.id, f.key, val)}>
                             {val != null ? String(val) : <span className="text-muted-foreground italic">—</span>}
                           </button>
                         )}
@@ -425,7 +425,7 @@ export default function RevisaoTab({ eventId, criticalCount, highCount, onOpenCr
                                   ) : (
                                     <button
                                       className={`text-xs text-left w-full px-1 py-0.5 rounded hover:bg-muted/50 transition-colors ${isComputedTotal ? "text-muted-foreground" : ""}`}
-                                      onClick={() => startItemEdit(item.id, col.key as ItemFieldKey, val)}
+                                      onClick={() => startEditItem(item.id, col.key as ItemFieldKey, val)}
                                       title={isComputedTotal ? "Calculado automaticamente (qty × preço unit.)" : undefined}
                                     >
                                       {val != null ? (col.type === "number" ? Number(val).toFixed(col.key.includes("price") ? 2 : 0) : String(val)) : <span className="text-muted-foreground italic">—</span>}
