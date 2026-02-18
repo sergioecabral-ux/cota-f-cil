@@ -242,6 +242,7 @@ export type Database = {
         Row: {
           confidence_overall: number | null
           created_at: string
+          display_name: string | null
           event_id: string
           evidence_id: string
           id: string
@@ -263,6 +264,7 @@ export type Database = {
         Insert: {
           confidence_overall?: number | null
           created_at?: string
+          display_name?: string | null
           event_id: string
           evidence_id: string
           id?: string
@@ -284,6 +286,7 @@ export type Database = {
         Update: {
           confidence_overall?: number | null
           created_at?: string
+          display_name?: string | null
           event_id?: string
           evidence_id?: string
           id?: string
