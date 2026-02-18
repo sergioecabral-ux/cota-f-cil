@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { getActorLabel, insertAuditLog } from "@/lib/auditLog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -121,31 +122,36 @@ export default function RevisaoTab({ eventId, criticalCount, highCount, onOpenCr
   // Save quote field
   const saveFieldMutation = useMutation({
     mutationFn: async ({ quoteId, field, value, oldValue }: { quoteId: string; field: string; value: any; oldValue: any }) => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Não autenticado");
+      const actor = await getActorLabel();
 
       const { error } = await supabase.from("quotes").update({ [field]: value }).eq("id", quoteId);
       if (error) throw error;
 
-      await supabase.from("audit_log").insert({
-        entity_type: "quote", entity_id: quoteId, field_name: field,
-        old_value: oldValue != null ? JSON.stringify(oldValue) : null,
-        new_value: value != null ? JSON.stringify(value) : null,
-        user_id: user.id,
+      await insertAuditLog({
+        entityType: "quote",
+        entityId: quoteId,
+        fieldName: field,
+        oldValue,
+        newValue: value,
+        sourceRef: { from: "revisao_tab" },
       });
 
-      // Auto-resolve review queue
       const { data: updatedQuote } = await supabase
         .from("quotes")
         .select("id, lead_time_days, shipping_terms, shipping_cost, minimum_order_value, minimum_order_qty")
-        .eq("id", quoteId).single();
+        .eq("id", quoteId)
+        .single();
 
       if (updatedQuote) {
         for (const [reason, check] of Object.entries(REASON_MAP)) {
           if (check(updatedQuote)) {
-            await supabase.from("review_queue")
-              .update({ resolved_at: new Date().toISOString(), resolved_by: "user" })
-              .eq("entity_id", quoteId).eq("entity_type", "quote").eq("reason", reason).is("resolved_at", null);
+            await supabase
+              .from("review_queue")
+              .update({ resolved_at: new Date().toISOString(), resolved_by: actor })
+              .eq("entity_id", quoteId)
+              .eq("entity_type", "quote")
+              .eq("reason", reason)
+              .is("resolved_at", null);
           }
         }
       }
