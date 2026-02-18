@@ -4,6 +4,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import AppLayout from "./components/AppLayout";
+import AuthGuard from "./components/AuthGuard";
+import Auth from "./pages/Auth";
 import CaixaDeEntrada from "./pages/CaixaDeEntrada";
 import Eventos from "./pages/Eventos";
 import ImportarEvidencias from "./pages/ImportarEvidencias";
@@ -21,7 +23,14 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <Routes>
-          <Route element={<AppLayout />}>
+          <Route path="/auth" element={<Auth />} />
+          <Route
+            element={
+              <AuthGuard>
+                <AppLayout />
+              </AuthGuard>
+            }
+          >
             <Route path="/" element={<CaixaDeEntrada />} />
             <Route path="/eventos" element={<Eventos />} />
             <Route path="/importar-evidencias" element={<ImportarEvidencias />} />
