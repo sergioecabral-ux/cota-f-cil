@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import Topbar from "@/components/Topbar";
 import RevisaoTab from "@/components/RevisaoTab";
+import ComparacaoTab from "@/components/ComparacaoTab";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -555,9 +556,7 @@ const EventoDetalhe = () => {
 
             {/* Comparação tab */}
             <TabsContent value="comparacao" className="mt-4">
-              <div className="bg-card rounded-xl border border-border shadow-card p-12 text-center">
-                <p className="text-muted-foreground">Aba de comparação será implementada em breve.</p>
-              </div>
+              <ComparacaoTab eventId={id!} />
             </TabsContent>
           </Tabs>
         </div>
