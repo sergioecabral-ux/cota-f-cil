@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import Topbar from "@/components/Topbar";
@@ -11,8 +11,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/hooks/use-toast";
-import { AlertTriangle, Upload, Play, MoreHorizontal, Eye, RefreshCw, Save, Check } from "lucide-react";
-import { format } from "date-fns";
+import { AlertTriangle, Upload, Play, MoreHorizontal, Eye, RefreshCw, Check, ShieldAlert, CheckCircle2 } from "lucide-react";
+import { format, formatDistanceToNow } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
 const statusLabel: Record<string, string> = { open: "Aberto", closed: "Fechado" };
 const priorityLabel: Record<string, string> = { low: "Baixa", medium: "Média", high: "Alta" };
@@ -20,6 +21,13 @@ const priorityColor: Record<string, string> = {
   low: "bg-muted text-muted-foreground",
   medium: "bg-highlight/15 text-highlight-foreground",
   high: "bg-destructive/15 text-destructive",
+};
+
+const severityOrder: Record<string, number> = { critical: 0, high: 1, normal: 2 };
+const severityBadge: Record<string, string> = {
+  critical: "bg-destructive/15 text-destructive border-destructive/30",
+  high: "bg-highlight/15 text-highlight border-highlight/30",
+  normal: "bg-muted text-muted-foreground border-border",
 };
 
 // --- Revisão tab types ---
@@ -42,6 +50,15 @@ interface SupplierGroup {
   quotes: QuoteRow[];
 }
 
+interface ReviewItem {
+  id: string;
+  severity: string;
+  reason: string;
+  entity_type: string;
+  entity_id: string;
+  created_at: string;
+}
+
 const EDITABLE_FIELDS = [
   { key: "lead_time_days", label: "Prazo (dias)", type: "number" },
   { key: "shipping_terms", label: "Frete (termos)", type: "text" },
@@ -62,11 +79,20 @@ const REASON_MAP: Record<string, (q: Record<string, any>) => boolean> = {
 
 const EventoDetalhe = () => {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [viewEvidence, setViewEvidence] = useState<any | null>(null);
   const [editingCell, setEditingCell] = useState<{ quoteId: string; field: string } | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [showCriticasModal, setShowCriticasModal] = useState(false);
+
+  // Auto-open modal if ?criticas=1
+  useEffect(() => {
+    if (searchParams.get("criticas") === "1") {
+      setShowCriticasModal(true);
+    }
+  }, [searchParams]);
 
   // Fetch event
   const { data: event, isLoading } = useQuery({
@@ -95,6 +121,39 @@ const EventoDetalhe = () => {
         .eq("severity", "critical");
       if (error) throw error;
       return count || 0;
+    },
+    enabled: !!id,
+  });
+
+  // Fetch high count
+  const { data: highCount = 0 } = useQuery({
+    queryKey: ["event-high-count", id],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("review_queue")
+        .select("id", { count: "exact", head: true })
+        .eq("event_id", id!)
+        .is("resolved_at", null)
+        .eq("severity", "high");
+      if (error) throw error;
+      return count || 0;
+    },
+    enabled: !!id,
+  });
+
+  // Fetch open review items for modal
+  const { data: reviewItems = [] } = useQuery({
+    queryKey: ["event-review-items", id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("review_queue")
+        .select("id, severity, reason, entity_type, entity_id, created_at")
+        .eq("event_id", id!)
+        .is("resolved_at", null)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      // Sort by severity priority
+      return (data || []).sort((a, b) => (severityOrder[a.severity] ?? 99) - (severityOrder[b.severity] ?? 99)) as ReviewItem[];
     },
     enabled: !!id,
   });
@@ -191,7 +250,6 @@ const EventoDetalhe = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Usuário não autenticado");
 
-      // Get eligible evidence
       const { data: toProcess, error } = await supabase
         .from("evidence")
         .select("id, supplier_id")
@@ -202,7 +260,6 @@ const EventoDetalhe = () => {
       if (error) throw error;
       if (!toProcess || toProcess.length === 0) return 0;
 
-      // Ensure "Desconhecido" supplier exists
       let fallbackSupplierId: string | null = null;
       const needsFallback = toProcess.some((e) => !e.supplier_id);
       if (needsFallback) {
@@ -231,7 +288,6 @@ const EventoDetalhe = () => {
       for (const ev of toProcess) {
         const supplierId = ev.supplier_id || fallbackSupplierId!;
 
-        // Create quote
         const { data: quote, error: qErr } = await supabase
           .from("quotes")
           .insert({
@@ -246,7 +302,6 @@ const EventoDetalhe = () => {
           .single();
         if (qErr) throw qErr;
 
-        // Create review_queue entries
         const { error: rqErr } = await supabase.from("review_queue").insert([
           { event_id: id, entity_type: "quote", entity_id: quote.id, severity: "critical", reason: "Prazo de entrega ausente", user_id: user.id },
           { event_id: id, entity_type: "quote", entity_id: quote.id, severity: "critical", reason: "Frete ausente", user_id: user.id },
@@ -254,7 +309,6 @@ const EventoDetalhe = () => {
         ]);
         if (rqErr) throw rqErr;
 
-        // Mark evidence as done
         await supabase
           .from("evidence")
           .update({ processing_status: "done", processing_error: null })
@@ -272,11 +326,34 @@ const EventoDetalhe = () => {
       }
       queryClient.invalidateQueries({ queryKey: ["event-evidence", id] });
       queryClient.invalidateQueries({ queryKey: ["event-critical-count", id] });
+      queryClient.invalidateQueries({ queryKey: ["event-high-count", id] });
       queryClient.invalidateQueries({ queryKey: ["event-quotes-grouped", id] });
+      queryClient.invalidateQueries({ queryKey: ["event-review-items", id] });
       toast({ title: `${count} evidência(s) processada(s)` });
     },
     onError: (err: any) => {
       toast({ title: "Erro ao processar", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // Resolve single review item
+  const resolveMutation = useMutation({
+    mutationFn: async (itemId: string) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { error } = await supabase
+        .from("review_queue")
+        .update({ resolved_at: new Date().toISOString(), resolved_by: user?.email || "user" })
+        .eq("id", itemId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["event-review-items", id] });
+      queryClient.invalidateQueries({ queryKey: ["event-critical-count", id] });
+      queryClient.invalidateQueries({ queryKey: ["event-high-count", id] });
+      toast({ title: "Pendência resolvida" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Erro", description: err.message, variant: "destructive" });
     },
   });
 
@@ -286,14 +363,12 @@ const EventoDetalhe = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Não autenticado");
 
-      // Update quote
       const { error } = await supabase
         .from("quotes")
         .update({ [field]: value })
         .eq("id", quoteId);
       if (error) throw error;
 
-      // Audit log
       await supabase.from("audit_log").insert({
         entity_type: "quote",
         entity_id: quoteId,
@@ -303,8 +378,6 @@ const EventoDetalhe = () => {
         user_id: user.id,
       });
 
-      // Resolve matching review_queue entries
-      // Re-fetch the updated quote to check conditions
       const { data: updatedQuote } = await supabase
         .from("quotes")
         .select("id, lead_time_days, shipping_terms, shipping_cost, minimum_order_value, minimum_order_qty")
@@ -328,6 +401,8 @@ const EventoDetalhe = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["event-quotes-grouped", id] });
       queryClient.invalidateQueries({ queryKey: ["event-critical-count", id] });
+      queryClient.invalidateQueries({ queryKey: ["event-high-count", id] });
+      queryClient.invalidateQueries({ queryKey: ["event-review-items", id] });
       setEditingCell(null);
       toast({ title: "Salvo" });
     },
@@ -410,10 +485,20 @@ const EventoDetalhe = () => {
                   {priorityLabel[event.priority] || event.priority}
                 </span>
               )}
-              <span className={`flex items-center gap-1 text-sm font-medium ${criticalCount > 0 ? "text-destructive" : "text-muted-foreground"}`}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className={`gap-1.5 text-sm font-medium ${criticalCount > 0 ? "text-destructive hover:text-destructive" : "text-muted-foreground"}`}
+                onClick={() => setShowCriticasModal(true)}
+              >
                 {criticalCount > 0 && <AlertTriangle className="h-3.5 w-3.5" />}
                 {criticalCount} crítica{criticalCount !== 1 ? "s" : ""}
-              </span>
+              </Button>
+              {highCount > 0 && (
+                <span className="text-xs font-medium text-highlight">
+                  Altas: {highCount}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <Button variant="outline" onClick={() => navigate(`/importar-evidencias?eventId=${id}`)}>
@@ -427,7 +512,7 @@ const EventoDetalhe = () => {
           </div>
 
           {/* Tabs */}
-          <Tabs defaultValue="dossie">
+          <Tabs defaultValue={searchParams.get("tab") || "dossie"}>
             <TabsList>
               <TabsTrigger value="dossie">Dossiê</TabsTrigger>
               <TabsTrigger value="revisao">Revisão</TabsTrigger>
@@ -491,6 +576,22 @@ const EventoDetalhe = () => {
 
             {/* Revisão tab */}
             <TabsContent value="revisao" className="mt-4 space-y-6">
+              {/* Pendências card */}
+              {(criticalCount > 0 || highCount > 0) && (
+                <div className="rounded-xl border border-border bg-card p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <ShieldAlert className="h-5 w-5 text-destructive" />
+                    <div className="flex items-center gap-3 text-sm">
+                      <span className="font-medium text-destructive">Críticas: {criticalCount}</span>
+                      <span className="font-medium text-highlight">Altas: {highCount}</span>
+                    </div>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => setShowCriticasModal(true)}>
+                    Ver todas
+                  </Button>
+                </div>
+              )}
+
               {supplierGroups && supplierGroups.length > 0 ? (
                 supplierGroups.map((group) => (
                   <div key={group.supplier_id} className="rounded-xl border border-border bg-card overflow-hidden">
@@ -579,6 +680,53 @@ const EventoDetalhe = () => {
           <pre className="whitespace-pre-wrap text-sm text-foreground bg-muted rounded-lg p-4">
             {viewEvidence?.text_content}
           </pre>
+        </DialogContent>
+      </Dialog>
+
+      {/* Críticas modal */}
+      <Dialog open={showCriticasModal} onOpenChange={setShowCriticasModal}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-destructive" />
+              Críticas e pendências do evento
+            </DialogTitle>
+          </DialogHeader>
+          {reviewItems.length > 0 ? (
+            <ul className="divide-y divide-border">
+              {reviewItems.map((item) => (
+                <li key={item.id} className="py-3 flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ${severityBadge[item.severity] || severityBadge.normal}`}>
+                        {item.severity}
+                      </span>
+                      <span className="text-sm font-medium text-foreground">{item.reason}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span>{item.entity_type} · {item.entity_id.slice(0, 8)}</span>
+                      <span>·</span>
+                      <span>{formatDistanceToNow(new Date(item.created_at), { addSuffix: true, locale: ptBR })}</span>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 gap-1"
+                    onClick={() => resolveMutation.mutate(item.id)}
+                    disabled={resolveMutation.isPending}
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Resolver
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="py-8 text-center text-muted-foreground text-sm">
+              Nenhuma pendência aberta neste evento.
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </>

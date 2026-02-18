@@ -1,63 +1,128 @@
+import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import Topbar from "@/components/Topbar";
-import { Inbox, Clock, CheckCircle2, AlertCircle } from "lucide-react";
+import { AlertTriangle, ShieldAlert } from "lucide-react";
+import { formatDistanceToNow } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
-const mockItems = [
-  { id: 1, title: "Nota fiscal #4521 pendente de revisão", from: "Fornecedor ABC", time: "Há 2 horas", status: "pending" as const },
-  { id: 2, title: "Evidência de entrega aprovada", from: "Transportadora XYZ", time: "Há 4 horas", status: "done" as const },
-  { id: 3, title: "Novo evento de auditoria criado", from: "Sistema", time: "Há 5 horas", status: "info" as const },
-  { id: 4, title: "Produto #892 com divergência de lote", from: "Qualidade", time: "Ontem", status: "alert" as const },
-  { id: 5, title: "Relatório mensal disponível", from: "Sistema", time: "Ontem", status: "info" as const },
-  { id: 6, title: "Nota fiscal #4518 aprovada", from: "Fornecedor DEF", time: "2 dias atrás", status: "done" as const },
-];
-
-const statusConfig = {
-  pending: { icon: Clock, color: "text-highlight", bg: "bg-highlight/10" },
-  done: { icon: CheckCircle2, color: "text-positive", bg: "bg-positive/10" },
-  alert: { icon: AlertCircle, color: "text-negative", bg: "bg-negative/10" },
-  info: { icon: Inbox, color: "text-accent", bg: "bg-accent/10" },
+const severityBadge: Record<string, string> = {
+  critical: "bg-destructive/15 text-destructive border-destructive/30",
+  high: "bg-highlight/15 text-highlight border-highlight/30",
+  normal: "bg-muted text-muted-foreground border-border",
 };
 
 const CaixaDeEntrada = () => {
+  const navigate = useNavigate();
+
+  // Fetch open critical review items with event titles
+  const { data: criticalItems = [], isLoading } = useQuery({
+    queryKey: ["inbox-criticals"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("review_queue")
+        .select("id, severity, reason, event_id, entity_type, entity_id, created_at")
+        .is("resolved_at", null)
+        .eq("severity", "critical")
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      if (!data || data.length === 0) return [];
+
+      // Fetch event titles
+      const eventIds = [...new Set(data.map((r) => r.event_id))];
+      const { data: events } = await supabase
+        .from("events")
+        .select("id, title")
+        .in("id", eventIds);
+      const eventMap: Record<string, string> = {};
+      events?.forEach((e) => (eventMap[e.id] = e.title));
+
+      return data.map((r) => ({
+        ...r,
+        event_title: eventMap[r.event_id] || "Evento desconhecido",
+      }));
+    },
+  });
+
+  // Counts
+  const { data: totalCritical = 0 } = useQuery({
+    queryKey: ["inbox-critical-count"],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("review_queue")
+        .select("id", { count: "exact", head: true })
+        .is("resolved_at", null)
+        .eq("severity", "critical");
+      if (error) throw error;
+      return count || 0;
+    },
+  });
+
+  const { data: totalHigh = 0 } = useQuery({
+    queryKey: ["inbox-high-count"],
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from("review_queue")
+        .select("id", { count: "exact", head: true })
+        .is("resolved_at", null)
+        .eq("severity", "high");
+      if (error) throw error;
+      return count || 0;
+    },
+  });
+
   return (
     <>
       <Topbar title="Caixa de Entrada" />
       <div className="flex-1 p-6">
         <div className="max-w-4xl mx-auto">
-          <div className="grid grid-cols-3 gap-4 mb-8">
-            {[
-              { label: "Pendentes", value: 12, color: "text-highlight" },
-              { label: "Resolvidos hoje", value: 5, color: "text-positive" },
-              { label: "Alertas", value: 2, color: "text-negative" },
-            ].map((stat) => (
-              <div key={stat.label} className="bg-card rounded-xl border border-border p-5 shadow-card">
-                <p className="text-sm text-muted-foreground mb-1">{stat.label}</p>
-                <p className={`text-3xl font-bold ${stat.color}`}>{stat.value}</p>
-              </div>
-            ))}
+          {/* Stats */}
+          <div className="grid grid-cols-2 gap-4 mb-8">
+            <div className="bg-card rounded-xl border border-border p-5 shadow-card">
+              <p className="text-sm text-muted-foreground mb-1">Críticas abertas</p>
+              <p className="text-3xl font-bold text-destructive">{totalCritical}</p>
+            </div>
+            <div className="bg-card rounded-xl border border-border p-5 shadow-card">
+              <p className="text-sm text-muted-foreground mb-1">Altas abertas</p>
+              <p className="text-3xl font-bold text-highlight">{totalHigh}</p>
+            </div>
           </div>
 
+          {/* Critical items list */}
           <div className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
-            <div className="px-5 py-4 border-b border-border">
-              <h2 className="font-semibold text-foreground">Itens Recentes</h2>
+            <div className="px-5 py-4 border-b border-border flex items-center gap-2">
+              <ShieldAlert className="h-4 w-4 text-destructive" />
+              <h2 className="font-semibold text-foreground">Críticas abertas</h2>
             </div>
-            <ul className="divide-y divide-border">
-              {mockItems.map((item) => {
-                const cfg = statusConfig[item.status];
-                const Icon = cfg.icon;
-                return (
-                  <li key={item.id} className="px-5 py-4 flex items-center gap-4 hover:bg-secondary/50 transition-colors cursor-pointer">
-                    <div className={`h-10 w-10 rounded-lg ${cfg.bg} flex items-center justify-center shrink-0`}>
-                      <Icon className={`h-5 w-5 ${cfg.color}`} />
+            {isLoading ? (
+              <div className="px-5 py-8 text-center text-sm text-muted-foreground">Carregando...</div>
+            ) : criticalItems.length > 0 ? (
+              <ul className="divide-y divide-border">
+                {criticalItems.map((item) => (
+                  <li
+                    key={item.id}
+                    className="px-5 py-4 flex items-center gap-4 hover:bg-secondary/50 transition-colors cursor-pointer"
+                    onClick={() => navigate(`/events/${item.event_id}?criticas=1`)}
+                  >
+                    <div className="h-10 w-10 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0">
+                      <AlertTriangle className="h-5 w-5 text-destructive" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">{item.title}</p>
-                      <p className="text-xs text-muted-foreground">{item.from}</p>
+                      <p className="text-sm font-medium text-foreground truncate">{item.reason}</p>
+                      <p className="text-xs text-muted-foreground">{item.event_title}</p>
                     </div>
-                    <span className="text-xs text-muted-foreground whitespace-nowrap">{item.time}</span>
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      {formatDistanceToNow(new Date(item.created_at), { addSuffix: true, locale: ptBR })}
+                    </span>
                   </li>
-                );
-              })}
-            </ul>
+                ))}
+              </ul>
+            ) : (
+              <div className="px-5 py-12 text-center text-sm text-muted-foreground">
+                Nenhuma crítica aberta. Tudo certo! 🎉
+              </div>
+            )}
           </div>
         </div>
       </div>
