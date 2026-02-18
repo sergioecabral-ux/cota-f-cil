@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -10,8 +10,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
-import { AlertTriangle, Upload, Play, MoreHorizontal, Eye, RefreshCw, Check, ShieldAlert, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, Upload, Play, MoreHorizontal, Eye, RefreshCw, Check, ShieldAlert, CheckCircle2, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
@@ -57,6 +58,17 @@ interface ReviewItem {
   entity_type: string;
   entity_id: string;
   created_at: string;
+  quote?: {
+    id: string;
+    lead_time_days: number | null;
+    lead_time_notes: string | null;
+    shipping_terms: string | null;
+    shipping_cost: number | null;
+    minimum_order_value: number | null;
+    minimum_order_qty: number | null;
+    minimum_order_notes: string | null;
+    supplier_name: string;
+  };
 }
 
 const EDITABLE_FIELDS = [
@@ -86,6 +98,8 @@ const EventoDetalhe = () => {
   const [editingCell, setEditingCell] = useState<{ quoteId: string; field: string } | null>(null);
   const [editValue, setEditValue] = useState("");
   const [showCriticasModal, setShowCriticasModal] = useState(false);
+  const [expandedItem, setExpandedItem] = useState<string | null>(null);
+  const [resolvedItems, setResolvedItems] = useState<Set<string>>(new Set());
 
   // Auto-open modal if ?criticas=1
   useEffect(() => {
@@ -152,8 +166,43 @@ const EventoDetalhe = () => {
         .is("resolved_at", null)
         .order("created_at", { ascending: false });
       if (error) throw error;
-      // Sort by severity priority
-      return (data || []).sort((a, b) => (severityOrder[a.severity] ?? 99) - (severityOrder[b.severity] ?? 99)) as ReviewItem[];
+
+      const items = (data || []).sort((a, b) => (severityOrder[a.severity] ?? 99) - (severityOrder[b.severity] ?? 99));
+
+      // Fetch quote+supplier data for quote-type items
+      const quoteIds = [...new Set(items.filter(i => i.entity_type === 'quote').map(i => i.entity_id))];
+      let quoteMap: Record<string, ReviewItem['quote']> = {};
+      if (quoteIds.length > 0) {
+        const { data: quotes } = await supabase
+          .from("quotes")
+          .select("id, supplier_id, lead_time_days, lead_time_notes, shipping_terms, shipping_cost, minimum_order_value, minimum_order_qty, minimum_order_notes")
+          .in("id", quoteIds);
+        if (quotes && quotes.length > 0) {
+          const sIds = [...new Set(quotes.map(q => q.supplier_id))];
+          const { data: suppliers } = await supabase.from("suppliers").select("id, name_raw, name_canonical").in("id", sIds);
+          const sMap: Record<string, string> = {};
+          suppliers?.forEach(s => { sMap[s.id] = s.name_canonical || s.name_raw; });
+
+          quotes.forEach(q => {
+            quoteMap[q.id] = {
+              id: q.id,
+              lead_time_days: q.lead_time_days,
+              lead_time_notes: q.lead_time_notes ?? null,
+              shipping_terms: q.shipping_terms,
+              shipping_cost: q.shipping_cost,
+              minimum_order_value: q.minimum_order_value,
+              minimum_order_qty: q.minimum_order_qty,
+              minimum_order_notes: q.minimum_order_notes ?? null,
+              supplier_name: sMap[q.supplier_id] || "Desconhecido",
+            };
+          });
+        }
+      }
+
+      return items.map(item => ({
+        ...item,
+        quote: quoteMap[item.entity_id],
+      })) as ReviewItem[];
     },
     enabled: !!id,
   });
@@ -354,6 +403,68 @@ const EventoDetalhe = () => {
     },
     onError: (err: any) => {
       toast({ title: "Erro", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // Resolve by filling quote data
+  const resolveWithDataMutation = useMutation({
+    mutationFn: async ({ item, fields }: { item: ReviewItem; fields: Record<string, any> }) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Não autenticado");
+
+      // Verify quote belongs to this event
+      const { data: quoteCheck } = await supabase
+        .from("quotes")
+        .select("id, event_id")
+        .eq("id", item.entity_id)
+        .single();
+      if (!quoteCheck || quoteCheck.event_id !== id) throw new Error("Quote não pertence a este evento");
+
+      // Update quote
+      const { error: updateErr } = await supabase
+        .from("quotes")
+        .update(fields)
+        .eq("id", item.entity_id);
+      if (updateErr) throw updateErr;
+
+      // Audit log for each field
+      for (const [fieldName, newValue] of Object.entries(fields)) {
+        if (newValue === undefined) continue;
+        const oldValue = item.quote?.[fieldName as keyof NonNullable<ReviewItem['quote']>] ?? null;
+        await supabase.from("audit_log").insert({
+          entity_type: "quote",
+          entity_id: item.entity_id,
+          field_name: fieldName,
+          old_value: oldValue != null ? JSON.stringify(oldValue) : null,
+          new_value: newValue != null ? JSON.stringify(newValue) : null,
+          user_id: user.id,
+          source_ref: { from: "criticas_modal", review_queue_id: item.id },
+        });
+      }
+
+      // Resolve ALL matching open review_queue items for this quote+reason
+      const { error: resolveErr } = await supabase
+        .from("review_queue")
+        .update({ resolved_at: new Date().toISOString(), resolved_by: user.email || "user" })
+        .eq("entity_id", item.entity_id)
+        .eq("entity_type", "quote")
+        .eq("reason", item.reason)
+        .is("resolved_at", null);
+      if (resolveErr) throw resolveErr;
+
+      return item.id;
+    },
+    onSuccess: (resolvedId) => {
+      setResolvedItems(prev => new Set(prev).add(resolvedId));
+      setExpandedItem(null);
+      queryClient.invalidateQueries({ queryKey: ["event-review-items", id] });
+      queryClient.invalidateQueries({ queryKey: ["event-critical-count", id] });
+      queryClient.invalidateQueries({ queryKey: ["event-high-count", id] });
+      queryClient.invalidateQueries({ queryKey: ["event-quotes-grouped", id] });
+      toast({ title: "Dados salvos e pendência resolvida" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Erro ao salvar", description: err.message, variant: "destructive" });
     },
   });
 
@@ -684,7 +795,10 @@ const EventoDetalhe = () => {
       </Dialog>
 
       {/* Críticas modal */}
-      <Dialog open={showCriticasModal} onOpenChange={setShowCriticasModal}>
+      <Dialog open={showCriticasModal} onOpenChange={(open) => {
+        setShowCriticasModal(open);
+        if (!open) { setExpandedItem(null); setResolvedItems(new Set()); }
+      }}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -694,33 +808,87 @@ const EventoDetalhe = () => {
           </DialogHeader>
           {reviewItems.length > 0 ? (
             <ul className="divide-y divide-border">
-              {reviewItems.map((item) => (
-                <li key={item.id} className="py-3 flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0 space-y-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ${severityBadge[item.severity] || severityBadge.normal}`}>
-                        {item.severity}
-                      </span>
-                      <span className="text-sm font-medium text-foreground">{item.reason}</span>
+              {reviewItems.map((item) => {
+                const isResolved = resolvedItems.has(item.id);
+                const isExpanded = expandedItem === item.id;
+                const q = item.quote;
+
+                return (
+                  <li key={item.id} className="py-3 space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0 space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ${severityBadge[item.severity] || severityBadge.normal}`}>
+                            {item.severity}
+                          </span>
+                          <span className="text-sm font-medium text-foreground">{item.reason}</span>
+                          {isResolved && (
+                            <Badge variant="default" className="text-[10px] gap-1">
+                              <CheckCircle2 className="h-3 w-3" /> Resolvida
+                            </Badge>
+                          )}
+                        </div>
+                        {q && (
+                          <div className="text-xs text-muted-foreground space-y-0.5">
+                            <span className="font-medium text-foreground/80">{q.supplier_name}</span>
+                            <span className="ml-2">· cotação {item.entity_id.slice(0, 8)}</span>
+                            <div className="flex gap-3 mt-0.5 flex-wrap">
+                              {item.reason.includes('Frete') && (
+                                <>
+                                  <span>Frete: {q.shipping_terms || '—'}</span>
+                                  <span>Custo: {q.shipping_cost != null ? `R$ ${q.shipping_cost}` : '—'}</span>
+                                </>
+                              )}
+                              {item.reason.includes('Prazo') && (
+                                <span>Prazo: {q.lead_time_days != null ? `${q.lead_time_days} dias` : '—'}</span>
+                              )}
+                              {item.reason.includes('Pedido mínimo') && (
+                                <>
+                                  <span>Valor mín: {q.minimum_order_value != null ? `R$ ${q.minimum_order_value}` : '—'}</span>
+                                  <span>Qtd mín: {q.minimum_order_qty != null ? String(q.minimum_order_qty) : '—'}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <span>{formatDistanceToNow(new Date(item.created_at), { addSuffix: true, locale: ptBR })}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {!isResolved && item.entity_type === 'quote' && q && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1"
+                            onClick={() => setExpandedItem(isExpanded ? null : item.id)}
+                          >
+                            {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                            Resolver
+                          </Button>
+                        )}
+                        {!isResolved && (!q || item.entity_type !== 'quote') && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1"
+                            onClick={() => resolveMutation.mutate(item.id)}
+                            disabled={resolveMutation.isPending}
+                          >
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            Marcar resolvida
+                          </Button>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span>{item.entity_type} · {item.entity_id.slice(0, 8)}</span>
-                      <span>·</span>
-                      <span>{formatDistanceToNow(new Date(item.created_at), { addSuffix: true, locale: ptBR })}</span>
-                    </div>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0 gap-1"
-                    onClick={() => resolveMutation.mutate(item.id)}
-                    disabled={resolveMutation.isPending}
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    Resolver
-                  </Button>
-                </li>
-              ))}
+
+                    {/* Inline resolve form */}
+                    {isExpanded && !isResolved && q && (
+                      <ResolveForm item={item} onSave={(fields) => resolveWithDataMutation.mutate({ item, fields })} isPending={resolveWithDataMutation.isPending} />
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <div className="py-8 text-center text-muted-foreground text-sm">
@@ -731,6 +899,99 @@ const EventoDetalhe = () => {
       </Dialog>
     </>
   );
+};
+
+// --- Inline resolve form component ---
+const ResolveForm = ({ item, onSave, isPending }: { item: ReviewItem; onSave: (fields: Record<string, any>) => void; isPending: boolean }) => {
+  const reason = item.reason;
+  const q = item.quote!;
+
+  const [shippingTerms, setShippingTerms] = useState(q.shipping_terms || "");
+  const [shippingCost, setShippingCost] = useState(q.shipping_cost != null ? String(q.shipping_cost) : "");
+  const [leadTimeDays, setLeadTimeDays] = useState(q.lead_time_days != null ? String(q.lead_time_days) : "");
+  const [leadTimeNotes, setLeadTimeNotes] = useState(q.lead_time_notes || "");
+  const [minOrderValue, setMinOrderValue] = useState(q.minimum_order_value != null ? String(q.minimum_order_value) : "");
+  const [minOrderQty, setMinOrderQty] = useState(q.minimum_order_qty != null ? String(q.minimum_order_qty) : "");
+  const [minOrderNotes, setMinOrderNotes] = useState(q.minimum_order_notes || "");
+
+  if (reason.includes('Frete')) {
+    return (
+      <div className="bg-muted/50 rounded-lg p-3 space-y-3 border border-border">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Termos de frete</Label>
+            <Input value={shippingTerms} onChange={e => setShippingTerms(e.target.value)} placeholder="CIF, FOB..." className="h-8 text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Custo do frete (R$)</Label>
+            <Input type="number" value={shippingCost} onChange={e => setShippingCost(e.target.value)} placeholder="0.00" className="h-8 text-sm" />
+          </div>
+        </div>
+        <Button size="sm" onClick={() => onSave({
+          shipping_terms: shippingTerms || null,
+          shipping_cost: shippingCost ? Number(shippingCost) : null,
+        })} disabled={isPending || (!shippingTerms && !shippingCost)}>
+          {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Check className="h-3.5 w-3.5 mr-1" />}
+          Salvar frete
+        </Button>
+      </div>
+    );
+  }
+
+  if (reason.includes('Prazo')) {
+    return (
+      <div className="bg-muted/50 rounded-lg p-3 space-y-3 border border-border">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Prazo de entrega (dias)</Label>
+            <Input type="number" value={leadTimeDays} onChange={e => setLeadTimeDays(e.target.value)} placeholder="0" className="h-8 text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Observações (opcional)</Label>
+            <Input value={leadTimeNotes} onChange={e => setLeadTimeNotes(e.target.value)} placeholder="Detalhes..." className="h-8 text-sm" />
+          </div>
+        </div>
+        <Button size="sm" onClick={() => onSave({
+          lead_time_days: leadTimeDays ? Number(leadTimeDays) : null,
+          lead_time_notes: leadTimeNotes || null,
+        })} disabled={isPending || !leadTimeDays}>
+          {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Check className="h-3.5 w-3.5 mr-1" />}
+          Salvar prazo
+        </Button>
+      </div>
+    );
+  }
+
+  if (reason.includes('Pedido mínimo')) {
+    return (
+      <div className="bg-muted/50 rounded-lg p-3 space-y-3 border border-border">
+        <div className="grid grid-cols-3 gap-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Valor mínimo (R$)</Label>
+            <Input type="number" value={minOrderValue} onChange={e => setMinOrderValue(e.target.value)} placeholder="0.00" className="h-8 text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Quantidade mínima</Label>
+            <Input type="number" value={minOrderQty} onChange={e => setMinOrderQty(e.target.value)} placeholder="0" className="h-8 text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Observações (opcional)</Label>
+            <Input value={minOrderNotes} onChange={e => setMinOrderNotes(e.target.value)} placeholder="Detalhes..." className="h-8 text-sm" />
+          </div>
+        </div>
+        <Button size="sm" onClick={() => onSave({
+          minimum_order_value: minOrderValue ? Number(minOrderValue) : null,
+          minimum_order_qty: minOrderQty ? Number(minOrderQty) : null,
+          minimum_order_notes: minOrderNotes || null,
+        })} disabled={isPending || (!minOrderValue && !minOrderQty)}>
+          {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Check className="h-3.5 w-3.5 mr-1" />}
+          Salvar pedido mínimo
+        </Button>
+      </div>
+    );
+  }
+
+  return null;
 };
 
 export default EventoDetalhe;
