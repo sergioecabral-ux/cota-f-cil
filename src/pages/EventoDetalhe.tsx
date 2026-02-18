@@ -329,7 +329,7 @@ const EventoDetalhe = () => {
       const { data: { user } } = await supabase.auth.getUser();
       const { error } = await supabase
         .from("review_queue")
-        .update({ resolved_at: new Date().toISOString(), resolved_by: user?.email || "user" })
+        .update({ resolved_at: new Date().toISOString(), resolved_by: "user" })
         .eq("id", itemId);
       if (error) throw error;
     },
@@ -383,7 +383,7 @@ const EventoDetalhe = () => {
       // Resolve ALL matching open review_queue items for this quote+reason
       const { error: resolveErr } = await supabase
         .from("review_queue")
-        .update({ resolved_at: new Date().toISOString(), resolved_by: user.email || "user" })
+        .update({ resolved_at: new Date().toISOString(), resolved_by: "user" })
         .eq("entity_id", item.entity_id)
         .eq("entity_type", "quote")
         .eq("reason", item.reason)
