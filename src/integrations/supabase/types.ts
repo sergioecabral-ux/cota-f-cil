@@ -14,7 +14,395 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      audit_log: {
+        Row: {
+          created_at: string
+          entity_id: string
+          entity_type: string
+          field_name: string | null
+          id: string
+          new_value: Json | null
+          old_value: Json | null
+          source_ref: Json | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          entity_id: string
+          entity_type: string
+          field_name?: string | null
+          id?: string
+          new_value?: Json | null
+          old_value?: Json | null
+          source_ref?: Json | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          entity_id?: string
+          entity_type?: string
+          field_name?: string | null
+          id?: string
+          new_value?: Json | null
+          old_value?: Json | null
+          source_ref?: Json | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      events: {
+        Row: {
+          created_at: string
+          id: string
+          priority: string | null
+          status: string
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          priority?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          priority?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      evidence: {
+        Row: {
+          created_at: string
+          event_id: string
+          file_hash: string | null
+          functional_label: string
+          id: string
+          kind: string
+          processing_error: string | null
+          processing_status: string
+          storage_path: string | null
+          supplier_id: string | null
+          text_content: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          event_id: string
+          file_hash?: string | null
+          functional_label?: string
+          id?: string
+          kind: string
+          processing_error?: string | null
+          processing_status?: string
+          storage_path?: string | null
+          supplier_id?: string | null
+          text_content?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          event_id?: string
+          file_hash?: string | null
+          functional_label?: string
+          id?: string
+          kind?: string
+          processing_error?: string | null
+          processing_status?: string
+          storage_path?: string | null
+          supplier_id?: string | null
+          text_content?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "evidence_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "evidence_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      products_canonical: {
+        Row: {
+          created_at: string
+          critical_schema: Json | null
+          id: string
+          name_canonical: string
+          status_review: boolean | null
+          unit_standard: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          critical_schema?: Json | null
+          id?: string
+          name_canonical: string
+          status_review?: boolean | null
+          unit_standard?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          critical_schema?: Json | null
+          id?: string
+          name_canonical?: string
+          status_review?: boolean | null
+          unit_standard?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      quote_items: {
+        Row: {
+          attrs: Json | null
+          confidence: Json | null
+          created_at: string
+          description_supplier: string | null
+          id: string
+          needs_review: boolean | null
+          normalized_qty: number | null
+          normalized_unit: string | null
+          normalized_unit_price: number | null
+          product_canonical_id: string | null
+          qty: number | null
+          quote_id: string
+          source_ref: Json | null
+          total_price: number | null
+          unit: string | null
+          unit_price: number | null
+          user_id: string
+        }
+        Insert: {
+          attrs?: Json | null
+          confidence?: Json | null
+          created_at?: string
+          description_supplier?: string | null
+          id?: string
+          needs_review?: boolean | null
+          normalized_qty?: number | null
+          normalized_unit?: string | null
+          normalized_unit_price?: number | null
+          product_canonical_id?: string | null
+          qty?: number | null
+          quote_id: string
+          source_ref?: Json | null
+          total_price?: number | null
+          unit?: string | null
+          unit_price?: number | null
+          user_id: string
+        }
+        Update: {
+          attrs?: Json | null
+          confidence?: Json | null
+          created_at?: string
+          description_supplier?: string | null
+          id?: string
+          needs_review?: boolean | null
+          normalized_qty?: number | null
+          normalized_unit?: string | null
+          normalized_unit_price?: number | null
+          product_canonical_id?: string | null
+          qty?: number | null
+          quote_id?: string
+          source_ref?: Json | null
+          total_price?: number | null
+          unit?: string | null
+          unit_price?: number | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quote_items_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      quotes: {
+        Row: {
+          confidence_overall: number | null
+          created_at: string
+          event_id: string
+          evidence_id: string
+          id: string
+          lead_time_days: number | null
+          lead_time_notes: string | null
+          minimum_order_notes: string | null
+          minimum_order_qty: number | null
+          minimum_order_value: number | null
+          needs_review: boolean | null
+          payment_terms: string | null
+          shipping_cost: number | null
+          shipping_terms: string | null
+          source_ref: Json | null
+          supplier_id: string
+          updated_at: string
+          user_id: string
+          validity_days: number | null
+        }
+        Insert: {
+          confidence_overall?: number | null
+          created_at?: string
+          event_id: string
+          evidence_id: string
+          id?: string
+          lead_time_days?: number | null
+          lead_time_notes?: string | null
+          minimum_order_notes?: string | null
+          minimum_order_qty?: number | null
+          minimum_order_value?: number | null
+          needs_review?: boolean | null
+          payment_terms?: string | null
+          shipping_cost?: number | null
+          shipping_terms?: string | null
+          source_ref?: Json | null
+          supplier_id: string
+          updated_at?: string
+          user_id: string
+          validity_days?: number | null
+        }
+        Update: {
+          confidence_overall?: number | null
+          created_at?: string
+          event_id?: string
+          evidence_id?: string
+          id?: string
+          lead_time_days?: number | null
+          lead_time_notes?: string | null
+          minimum_order_notes?: string | null
+          minimum_order_qty?: number | null
+          minimum_order_value?: number | null
+          needs_review?: boolean | null
+          payment_terms?: string | null
+          shipping_cost?: number | null
+          shipping_terms?: string | null
+          source_ref?: Json | null
+          supplier_id?: string
+          updated_at?: string
+          user_id?: string
+          validity_days?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quotes_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quotes_evidence_id_fkey"
+            columns: ["evidence_id"]
+            isOneToOne: false
+            referencedRelation: "evidence"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quotes_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      review_queue: {
+        Row: {
+          created_at: string
+          entity_id: string
+          entity_type: string
+          event_id: string
+          id: string
+          reason: string
+          resolved_at: string | null
+          resolved_by: string | null
+          severity: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          entity_id: string
+          entity_type: string
+          event_id: string
+          id?: string
+          reason: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          severity: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          entity_id?: string
+          entity_type?: string
+          event_id?: string
+          id?: string
+          reason?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          severity?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "review_queue_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      suppliers: {
+        Row: {
+          created_at: string
+          id: string
+          name_canonical: string | null
+          name_raw: string
+          phone: string | null
+          status_review: boolean | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name_canonical?: string | null
+          name_raw: string
+          phone?: string | null
+          status_review?: boolean | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name_canonical?: string | null
+          name_raw?: string
+          phone?: string | null
+          status_review?: boolean | null
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
