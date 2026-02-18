@@ -91,7 +91,7 @@ export default function RevisaoTab({ eventId, criticalCount, highCount, onOpenCr
   // Fetch all quote_items for all quotes in this event
   const quoteIds = quotes.map(q => q.id);
   const { data: allItems = [] } = useQuery({
-    queryKey: ["revisao-items", eventId, quoteIds],
+    queryKey: ["revisao-items", eventId],
     queryFn: async () => {
       if (quoteIds.length === 0) return [] as QuoteItem[];
       const { data, error } = await supabase
