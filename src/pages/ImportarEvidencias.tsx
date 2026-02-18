@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useState, useCallback } from "react";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import Topbar from "@/components/Topbar";
@@ -9,15 +9,24 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "@/hooks/use-toast";
-import { Upload, FileText, Archive, AlertTriangle } from "lucide-react";
+import { Upload, FileText, Archive, AlertTriangle, ArrowLeft, FolderOpen, ClipboardCheck, CheckCircle2, Info } from "lucide-react";
 import { format } from "date-fns";
 
 const ACCEPT_FILES = ".pdf,.jpg,.jpeg,.png";
 const ACCEPT_ZIP = ".zip";
 
+const STEPS = [
+  { label: "Importar evidências", active: true },
+  { label: "Processar", active: false },
+  { label: "Revisar", active: false },
+  { label: "Comparar", active: false },
+];
+
 const ImportarEvidencias = () => {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [eventId, setEventId] = useState<string>(searchParams.get("eventId") || "");
   const [supplierId, setSupplierId] = useState<string>("none");
@@ -25,6 +34,7 @@ const ImportarEvidencias = () => {
   const [dragOver, setDragOver] = useState(false);
   const [dragOverZip, setDragOverZip] = useState(false);
   const [viewEvidence, setViewEvidence] = useState<any | null>(null);
+  const [showSuccessCard, setShowSuccessCard] = useState(false);
 
   // Fetch events
   const { data: events } = useQuery({
@@ -38,6 +48,8 @@ const ImportarEvidencias = () => {
       return data;
     },
   });
+
+  const selectedEvent = events?.find((e) => e.id === eventId);
 
   // Fetch suppliers
   const { data: suppliers } = useQuery({
@@ -75,6 +87,11 @@ const ImportarEvidencias = () => {
     return data.user?.id;
   };
 
+  const onMutationSuccess = () => {
+    queryClient.invalidateQueries({ queryKey: ["evidence", eventId] });
+    setShowSuccessCard(true);
+  };
+
   // Upload file mutation
   const uploadFile = useMutation({
     mutationFn: async (file: File) => {
@@ -102,7 +119,7 @@ const ImportarEvidencias = () => {
       if (insertError) throw insertError;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["evidence", eventId] });
+      onMutationSuccess();
       toast({ title: "Evidência enviada" });
     },
     onError: (err: any) => {
@@ -135,7 +152,7 @@ const ImportarEvidencias = () => {
       if (insertError) throw insertError;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["evidence", eventId] });
+      onMutationSuccess();
       toast({ title: "ZIP enviado (modo teste)" });
     },
     onError: (err: any) => {
@@ -161,7 +178,7 @@ const ImportarEvidencias = () => {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["evidence", eventId] });
+      onMutationSuccess();
       setTextContent("");
       toast({ title: "Texto salvo como evidência" });
     },
@@ -213,7 +230,6 @@ const ImportarEvidencias = () => {
     e.target.value = "";
   };
 
-  // View evidence content
   const handleView = async (ev: any) => {
     if (ev.kind === "text") {
       setViewEvidence(ev);
@@ -232,195 +248,286 @@ const ImportarEvidencias = () => {
   return (
     <>
       <Topbar title="Importar Evidências" />
-      <div className="flex-1 p-6 overflow-auto">
-        <div className="max-w-4xl mx-auto space-y-8">
-          {/* Selectors */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Evento *</Label>
-              <Select value={eventId} onValueChange={setEventId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione um evento" />
-                </SelectTrigger>
-                <SelectContent>
-                  {events?.map((ev) => (
-                    <SelectItem key={ev.id} value={ev.id}>
-                      {ev.title}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Fornecedor (opcional)</Label>
-              <Select value={supplierId} onValueChange={setSupplierId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Desconhecido" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Desconhecido</SelectItem>
-                  {suppliers?.map((s) => (
-                    <SelectItem key={s.id} value={s.id}>
-                      {s.name_raw}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {/* Block A - File Upload */}
-          <div className="space-y-3">
-            <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
-              <Upload className="h-4 w-4" /> Upload de Arquivos (PDF / Imagem)
-            </h2>
-            <div
-              className={`relative border-2 border-dashed rounded-xl p-12 text-center transition-colors ${
-                dragOver
-                  ? "border-primary bg-primary/5"
-                  : "border-border bg-card"
-              } ${isDisabled ? "opacity-50 pointer-events-none" : "cursor-pointer"}`}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOver(true);
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={handleDrop}
-              onClick={() =>
-                !isDisabled &&
-                document.getElementById("file-input")?.click()
-              }
-            >
-              <Upload className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
-              <p className="text-muted-foreground mb-1">
-                Arraste arquivos aqui ou clique para selecionar
+      <div className="flex-1 overflow-auto">
+        {/* Contextual Header */}
+        <div className="sticky top-0 z-10 border-b border-border bg-card px-6 py-3">
+          {eventId && selectedEvent ? (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm font-medium text-foreground">
+                Importando para o evento: <span className="font-semibold">{selectedEvent.title}</span>
               </p>
-              <p className="text-xs text-muted-foreground">
-                PDF, JPG, PNG — máx. 25MB
-              </p>
-              <input
-                id="file-input"
-                type="file"
-                accept={ACCEPT_FILES}
-                multiple
-                className="hidden"
-                onChange={handleFileInput}
-              />
+              <div className="flex flex-wrap gap-2">
+                <Button variant="default" size="sm" onClick={() => navigate(`/events/${eventId}`)}>
+                  <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Voltar para o evento
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => navigate(`/events/${eventId}?tab=dossie`)}>
+                  <FolderOpen className="h-3.5 w-3.5 mr-1" /> Ir para Dossiê
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => navigate(`/events/${eventId}?tab=revisao`)}>
+                  <ClipboardCheck className="h-3.5 w-3.5 mr-1" /> Ir para Revisão
+                </Button>
+              </div>
             </div>
-          </div>
-
-          {/* Block B - Text paste */}
-          <div className="space-y-3">
-            <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
-              <FileText className="h-4 w-4" /> Colar Texto (WhatsApp)
-            </h2>
-            <Textarea
-              placeholder="Cole aqui o texto copiado do WhatsApp..."
-              value={textContent}
-              onChange={(e) => setTextContent(e.target.value)}
-              className="min-h-[140px]"
-              disabled={isDisabled}
-            />
-            <Button
-              onClick={() => saveText.mutate()}
-              disabled={isDisabled || !textContent.trim() || saveText.isPending}
-            >
-              Salvar texto como evidência
-            </Button>
-          </div>
-
-          {/* Block C - ZIP upload */}
-          <div className="space-y-3">
-            <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
-              <Archive className="h-4 w-4" /> Upload ZIP (modo teste)
-            </h2>
-            <div className="flex items-start gap-2 p-3 rounded-lg bg-highlight/10 border border-highlight/30">
-              <AlertTriangle className="h-4 w-4 text-highlight mt-0.5 shrink-0" />
-              <p className="text-sm text-foreground">
-                Modo teste. ZIP não será processado automaticamente no MVP.
-              </p>
-            </div>
-            <div
-              className={`relative border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
-                dragOverZip
-                  ? "border-primary bg-primary/5"
-                  : "border-border bg-card"
-              } ${isDisabled ? "opacity-50 pointer-events-none" : "cursor-pointer"}`}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOverZip(true);
-              }}
-              onDragLeave={() => setDragOverZip(false)}
-              onDrop={handleDropZip}
-              onClick={() =>
-                !isDisabled &&
-                document.getElementById("zip-input")?.click()
-              }
-            >
-              <Archive className="h-6 w-6 mx-auto mb-2 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">Arraste um .zip ou clique</p>
-              <input
-                id="zip-input"
-                type="file"
-                accept={ACCEPT_ZIP}
-                className="hidden"
-                onChange={handleZipInput}
-              />
-            </div>
-          </div>
-
-          {/* Evidence table */}
-          {eventId && (
-            <div className="space-y-3">
-              <h2 className="text-base font-semibold text-foreground">
-                Evidências pendentes deste evento
-              </h2>
-              {evidenceList && evidenceList.length > 0 ? (
-                <div className="rounded-xl border border-border bg-card overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Data</TableHead>
-                        <TableHead>Tipo</TableHead>
-                        <TableHead>Label</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Erro</TableHead>
-                        <TableHead></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {evidenceList.map((ev) => (
-                        <TableRow key={ev.id}>
-                          <TableCell className="text-sm">
-                            {format(new Date(ev.created_at), "dd/MM/yyyy HH:mm")}
-                          </TableCell>
-                          <TableCell className="text-sm">{ev.kind}</TableCell>
-                          <TableCell className="text-sm">{ev.functional_label}</TableCell>
-                          <TableCell className="text-sm">{ev.processing_status}</TableCell>
-                          <TableCell className="text-sm text-destructive">
-                            {ev.processing_error || "—"}
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleView(ev)}
-                            >
-                              Ver
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Nenhuma evidência encontrada para este evento.
-                </p>
-              )}
+          ) : (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <AlertTriangle className="h-4 w-4" />
+              <p className="text-sm">Selecione um evento para continuar</p>
             </div>
           )}
+        </div>
+
+        {/* Stepper */}
+        <div className="border-b border-border bg-muted/30 px-6 py-4">
+          <div className="flex items-center justify-center gap-1 sm:gap-3">
+            {STEPS.map((step, i) => (
+              <div key={step.label} className="flex items-center gap-1 sm:gap-3">
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
+                      step.active
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {i + 1}
+                  </span>
+                  <span
+                    className={`text-xs sm:text-sm font-medium ${
+                      step.active ? "text-foreground" : "text-muted-foreground"
+                    }`}
+                  >
+                    {step.label}
+                  </span>
+                </div>
+                {i < STEPS.length - 1 && (
+                  <div className="h-px w-4 sm:w-8 bg-border" />
+                )}
+              </div>
+            ))}
+          </div>
+          {eventId && (
+            <div className="flex items-start gap-2 mt-3 p-2.5 rounded-lg bg-primary/5 border border-primary/20 max-w-2xl mx-auto">
+              <Info className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+              <p className="text-xs text-foreground">
+                Depois de importar, clique em <strong>Processar tudo</strong> no evento para gerar a fila de revisão.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="p-6">
+          <div className="max-w-4xl mx-auto space-y-8">
+            {/* Selectors */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Evento *</Label>
+                <Select value={eventId} onValueChange={setEventId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione um evento" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {events?.map((ev) => (
+                      <SelectItem key={ev.id} value={ev.id}>
+                        {ev.title}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Fornecedor (opcional)</Label>
+                <Select value={supplierId} onValueChange={setSupplierId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Desconhecido" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Desconhecido</SelectItem>
+                    {suppliers?.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name_raw}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Success Card */}
+            {showSuccessCard && eventId && (
+              <Card className="border-primary/30 bg-primary/5">
+                <CardContent className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-5 w-5 text-primary shrink-0" />
+                    <p className="text-sm font-medium text-foreground">Evidência adicionada com sucesso</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => navigate(`/events/${eventId}`)}>
+                      Voltar para o evento e Processar tudo
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setShowSuccessCard(false)}>
+                      Continuar importando
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Block A - File Upload */}
+            <div className="space-y-3">
+              <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
+                <Upload className="h-4 w-4" /> Upload de Arquivos (PDF / Imagem)
+              </h2>
+              <div
+                className={`relative border-2 border-dashed rounded-xl p-12 text-center transition-colors ${
+                  dragOver
+                    ? "border-primary bg-primary/5"
+                    : "border-border bg-card"
+                } ${isDisabled ? "opacity-50 pointer-events-none" : "cursor-pointer"}`}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOver(true);
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+                onClick={() =>
+                  !isDisabled &&
+                  document.getElementById("file-input")?.click()
+                }
+              >
+                <Upload className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
+                <p className="text-muted-foreground mb-1">
+                  Arraste arquivos aqui ou clique para selecionar
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  PDF, JPG, PNG — máx. 25MB
+                </p>
+                <input
+                  id="file-input"
+                  type="file"
+                  accept={ACCEPT_FILES}
+                  multiple
+                  className="hidden"
+                  onChange={handleFileInput}
+                />
+              </div>
+            </div>
+
+            {/* Block B - Text paste */}
+            <div className="space-y-3">
+              <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
+                <FileText className="h-4 w-4" /> Colar Texto (WhatsApp)
+              </h2>
+              <Textarea
+                placeholder="Cole aqui o texto copiado do WhatsApp..."
+                value={textContent}
+                onChange={(e) => setTextContent(e.target.value)}
+                className="min-h-[140px]"
+                disabled={isDisabled}
+              />
+              <Button
+                onClick={() => saveText.mutate()}
+                disabled={isDisabled || !textContent.trim() || saveText.isPending}
+              >
+                Salvar texto como evidência
+              </Button>
+            </div>
+
+            {/* Block C - ZIP upload */}
+            <div className="space-y-3">
+              <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
+                <Archive className="h-4 w-4" /> Upload ZIP (modo teste)
+              </h2>
+              <div className="flex items-start gap-2 p-3 rounded-lg bg-highlight/10 border border-highlight/30">
+                <AlertTriangle className="h-4 w-4 text-highlight mt-0.5 shrink-0" />
+                <p className="text-sm text-foreground">
+                  Modo teste. ZIP não será processado automaticamente no MVP.
+                </p>
+              </div>
+              <div
+                className={`relative border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
+                  dragOverZip
+                    ? "border-primary bg-primary/5"
+                    : "border-border bg-card"
+                } ${isDisabled ? "opacity-50 pointer-events-none" : "cursor-pointer"}`}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOverZip(true);
+                }}
+                onDragLeave={() => setDragOverZip(false)}
+                onDrop={handleDropZip}
+                onClick={() =>
+                  !isDisabled &&
+                  document.getElementById("zip-input")?.click()
+                }
+              >
+                <Archive className="h-6 w-6 mx-auto mb-2 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">Arraste um .zip ou clique</p>
+                <input
+                  id="zip-input"
+                  type="file"
+                  accept={ACCEPT_ZIP}
+                  className="hidden"
+                  onChange={handleZipInput}
+                />
+              </div>
+            </div>
+
+            {/* Evidence table */}
+            {eventId && (
+              <div className="space-y-2">
+                <h2 className="text-base font-semibold text-foreground">
+                  Evidências já anexadas a este evento
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  Quando terminar de anexar, volte ao evento e clique em <strong>Processar tudo</strong>
+                </p>
+                {evidenceList && evidenceList.length > 0 ? (
+                  <div className="rounded-xl border border-border bg-card overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Data</TableHead>
+                          <TableHead>Tipo</TableHead>
+                          <TableHead>Label</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Erro</TableHead>
+                          <TableHead></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {evidenceList.map((ev) => (
+                          <TableRow key={ev.id}>
+                            <TableCell className="text-sm">
+                              {format(new Date(ev.created_at), "dd/MM/yyyy HH:mm")}
+                            </TableCell>
+                            <TableCell className="text-sm">{ev.kind}</TableCell>
+                            <TableCell className="text-sm">{ev.functional_label}</TableCell>
+                            <TableCell className="text-sm">{ev.processing_status}</TableCell>
+                            <TableCell className="text-sm text-destructive">
+                              {ev.processing_error || "—"}
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleView(ev)}
+                              >
+                                Ver
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Nenhuma evidência encontrada para este evento.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
