@@ -8,6 +8,7 @@ import AuthGuard from "./components/AuthGuard";
 import Auth from "./pages/Auth";
 import CaixaDeEntrada from "./pages/CaixaDeEntrada";
 import Eventos from "./pages/Eventos";
+import EventoDetalhe from "./pages/EventoDetalhe";
 import ImportarEvidencias from "./pages/ImportarEvidencias";
 import Fornecedores from "./pages/Fornecedores";
 import Produtos from "./pages/Produtos";
@@ -34,6 +35,8 @@ const App = () => (
             <Route path="/" element={<CaixaDeEntrada />} />
             <Route path="/eventos" element={<Eventos />} />
             <Route path="/events" element={<Eventos />} />
+            <Route path="/eventos/:id" element={<EventoDetalhe />} />
+            <Route path="/events/:id" element={<EventoDetalhe />} />
             <Route path="/importar-evidencias" element={<ImportarEvidencias />} />
             <Route path="/fornecedores" element={<Fornecedores />} />
             <Route path="/produtos" element={<Produtos />} />
