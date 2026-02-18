@@ -44,6 +44,17 @@ const QUOTE_FIELDS = [
 
 type QuoteFieldKey = (typeof QUOTE_FIELDS)[number]["key"];
 
+type ItemFieldKey =
+  | "description_supplier"
+  | "qty"
+  | "unit"
+  | "unit_price"
+  | "total_price";
+
+type EditingTarget =
+  | { kind: "quote"; quoteId: string; field: QuoteFieldKey }
+  | { kind: "item"; itemId: string; field: ItemFieldKey };
+
 const REASON_MAP: Record<string, (q: Record<string, any>) => boolean> = {
   "Prazo de entrega ausente": (q) => q.lead_time_days != null,
   "Frete ausente": (q) => q.shipping_terms != null || q.shipping_cost != null,
@@ -59,7 +70,7 @@ interface RevisaoTabProps {
 
 export default function RevisaoTab({ eventId, criticalCount, highCount, onOpenCriticas }: RevisaoTabProps) {
   const queryClient = useQueryClient();
-  const [editingCell, setEditingCell] = useState<{ quoteId: string; field: string } | null>(null);
+  const [editingTarget, setEditingTarget] = useState<EditingTarget | null>(null);
   const [editValue, setEditValue] = useState("");
   const [editingName, setEditingName] = useState<string | null>(null);
   const [nameValue, setNameValue] = useState("");
@@ -141,7 +152,7 @@ export default function RevisaoTab({ eventId, criticalCount, highCount, onOpenCr
     },
     onSuccess: () => {
       invalidateAll();
-      setEditingCell(null);
+      setEditingTarget(null);
       toast({ title: "Salvo" });
     },
     onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
@@ -199,7 +210,7 @@ export default function RevisaoTab({ eventId, criticalCount, highCount, onOpenCr
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["revisao-items", eventId] });
-      setEditingCell(null);
+      setEditingTarget(null);
     },
     onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
   });
@@ -224,22 +235,27 @@ export default function RevisaoTab({ eventId, criticalCount, highCount, onOpenCr
     queryClient.invalidateQueries({ queryKey: ["event-review-items", eventId] });
   }, [queryClient, eventId]);
 
-  const startEdit = (id: string, field: string, value: any) => {
-    setEditingCell({ quoteId: id, field });
+  const startQuoteEdit = (quoteId: string, field: QuoteFieldKey, value: any) => {
+    setEditingTarget({ kind: "quote", quoteId, field });
+    setEditValue(value != null ? String(value) : "");
+  };
+
+  const startItemEdit = (itemId: string, field: ItemFieldKey, value: any) => {
+    setEditingTarget({ kind: "item", itemId, field });
     setEditValue(value != null ? String(value) : "");
   };
 
   const commitQuoteField = (quote: QuoteWithDetails) => {
-    if (!editingCell) return;
-    const fieldDef = QUOTE_FIELDS.find(f => f.key === editingCell.field);
+    if (!editingTarget || editingTarget.kind !== "quote") return;
+    const fieldDef = QUOTE_FIELDS.find(f => f.key === editingTarget.field);
     if (!fieldDef) return;
-    const oldValue = quote[editingCell.field as QuoteFieldKey];
+    const oldValue = quote[editingTarget.field];
     let newValue: any = editValue.trim() === "" ? null : editValue.trim();
     if (fieldDef.type === "number" && newValue != null) {
       newValue = Number(newValue);
       if (isNaN(newValue)) newValue = null;
     }
-    saveFieldMutation.mutate({ quoteId: quote.id, field: editingCell.field, value: newValue, oldValue });
+    saveFieldMutation.mutate({ quoteId: quote.id, field: editingTarget.field, value: newValue, oldValue });
   };
 
   const commitItemField = (item: QuoteItem, field: string, type: string) => {
@@ -330,7 +346,7 @@ export default function RevisaoTab({ eventId, criticalCount, highCount, onOpenCr
                 {/* Quote metadata fields */}
                 <div className="flex flex-wrap gap-x-4 gap-y-1">
                   {QUOTE_FIELDS.map(f => {
-                    const isEditing = editingCell?.quoteId === quote.id && editingCell?.field === f.key;
+                    const isEditing = editingTarget?.kind === "quote" && editingTarget.quoteId === quote.id && editingTarget.field === f.key;
                     const val = quote[f.key as QuoteFieldKey];
                     return (
                       <div key={f.key} className="flex items-center gap-1 text-xs">
@@ -341,7 +357,7 @@ export default function RevisaoTab({ eventId, criticalCount, highCount, onOpenCr
                               type={f.type}
                               value={editValue}
                               onChange={e => setEditValue(e.target.value)}
-                              onKeyDown={e => { if (e.key === "Enter") commitQuoteField(quote); if (e.key === "Escape") setEditingCell(null); }}
+                              onKeyDown={e => { if (e.key === "Enter") commitQuoteField(quote); if (e.key === "Escape") setEditingTarget(null); }}
                               className="h-6 text-xs w-20"
                               autoFocus
                             />
@@ -350,7 +366,7 @@ export default function RevisaoTab({ eventId, criticalCount, highCount, onOpenCr
                             </Button>
                           </div>
                         ) : (
-                          <button className="font-medium hover:text-primary transition-colors" onClick={() => startEdit(quote.id, f.key, val)}>
+                          <button className="font-medium hover:text-primary transition-colors" onClick={() => startQuoteEdit(quote.id, f.key, val)}>
                             {val != null ? String(val) : <span className="text-muted-foreground italic">—</span>}
                           </button>
                         )}
@@ -383,7 +399,7 @@ export default function RevisaoTab({ eventId, criticalCount, highCount, onOpenCr
                           <TableRow key={item.id}>
                             {ITEM_COLUMNS.map(col => {
                               const cellId = `${item.id}:${col.key}`;
-                              const isEditing = editingCell?.quoteId === item.id && editingCell?.field === col.key;
+                              const isEditing = editingTarget?.kind === "item" && editingTarget.itemId === item.id && editingTarget.field === col.key;
                               const val = item[col.key as keyof QuoteItem];
                               const isComputedTotal = col.key === "total_price" && item.qty != null && item.unit_price != null;
 
@@ -397,7 +413,7 @@ export default function RevisaoTab({ eventId, criticalCount, highCount, onOpenCr
                                         onChange={e => setEditValue(e.target.value)}
                                         onKeyDown={e => {
                                           if (e.key === "Enter") commitItemField(item, col.key, col.type);
-                                          if (e.key === "Escape") setEditingCell(null);
+                                          if (e.key === "Escape") setEditingTarget(null);
                                         }}
                                         className="h-7 text-xs"
                                         autoFocus
@@ -409,7 +425,7 @@ export default function RevisaoTab({ eventId, criticalCount, highCount, onOpenCr
                                   ) : (
                                     <button
                                       className={`text-xs text-left w-full px-1 py-0.5 rounded hover:bg-muted/50 transition-colors ${isComputedTotal ? "text-muted-foreground" : ""}`}
-                                      onClick={() => startEdit(item.id, col.key, val)}
+                                      onClick={() => startItemEdit(item.id, col.key as ItemFieldKey, val)}
                                       title={isComputedTotal ? "Calculado automaticamente (qty × preço unit.)" : undefined}
                                     >
                                       {val != null ? (col.type === "number" ? Number(val).toFixed(col.key.includes("price") ? 2 : 0) : String(val)) : <span className="text-muted-foreground italic">—</span>}
