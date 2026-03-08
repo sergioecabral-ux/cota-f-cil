@@ -280,26 +280,30 @@ serve(async (req) => {
     const extracted = JSON.parse(toolCall.function.arguments);
     console.log("Extracted data:", JSON.stringify(extracted));
 
-    // Find or create supplier
+    // Find or create supplier (case-insensitive dedup)
     let supplierId = evidence.supplier_id;
 
     if (!supplierId && extracted.supplier_name) {
-      // Check if supplier already exists
-      const { data: existingSupplier } = await supabase
+      const supplierName = extracted.supplier_name.trim();
+      const { data: existingSuppliers } = await supabase
         .from("suppliers")
-        .select("id")
-        .eq("name_raw", extracted.supplier_name)
-        .maybeSingle();
+        .select("id, name_raw")
+        .eq("user_id", userId);
 
-      if (existingSupplier) {
-        supplierId = existingSupplier.id;
+      const matchedSupplier = (existingSuppliers || []).find(
+        (s: any) => s.name_raw?.toLowerCase() === supplierName.toLowerCase()
+      );
+
+      if (matchedSupplier) {
+        supplierId = matchedSupplier.id;
+        console.log("Supplier matched (case-insensitive):", supplierName, "->", supplierId);
       } else {
         const { data: newSupplier, error: supplierErr } = await supabase
           .from("suppliers")
           .insert({
             user_id: userId,
-            name_raw: extracted.supplier_name,
-            name_canonical: extracted.supplier_name,
+            name_raw: supplierName,
+            name_canonical: supplierName,
             status_review: true,
           })
           .select("id")
@@ -310,6 +314,7 @@ serve(async (req) => {
           throw new Error("Failed to create supplier");
         }
         supplierId = newSupplier.id;
+        console.log("Supplier created:", supplierName, "->", supplierId);
       }
 
       // Link supplier to evidence
@@ -351,19 +356,62 @@ serve(async (req) => {
       throw new Error("Failed to create quote");
     }
 
-    // Create quote items
-    const items = (extracted.items || []).map((item: any) => ({
-      user_id: userId,
-      quote_id: quote.id,
-      description_supplier: item.description_supplier || "Sem descrição",
-      qty: item.qty ?? null,
-      unit: item.unit ?? null,
-      unit_price: item.unit_price ?? null,
-      total_price: item.total_price ?? null,
-      needs_review: true,
-      confidence: { source: "ai-extraction" },
-      source_ref: { origin: "ai-extraction" },
-    }));
+    // Find or create products and create quote items (case-insensitive dedup)
+    const { data: existingProducts } = await supabase
+      .from("products_canonical")
+      .select("id, name_canonical")
+      .eq("user_id", userId);
+
+    const productCache = existingProducts || [];
+
+    const items: any[] = [];
+    for (const item of extracted.items || []) {
+      const desc = (item.description_supplier || "Sem descrição").trim();
+      let productId: string | null = null;
+
+      // Case-insensitive match
+      const matchedProduct = productCache.find(
+        (p: any) => p.name_canonical?.toLowerCase() === desc.toLowerCase()
+      );
+
+      if (matchedProduct) {
+        productId = matchedProduct.id;
+        console.log("Product matched (case-insensitive):", desc, "->", productId);
+      } else {
+        const { data: newProduct, error: prodErr } = await supabase
+          .from("products_canonical")
+          .insert({
+            user_id: userId,
+            name_canonical: desc,
+            status_review: true,
+          })
+          .select("id")
+          .single();
+
+        if (prodErr) {
+          console.error("Error creating product:", prodErr);
+        } else {
+          productId = newProduct.id;
+          // Add to cache to avoid duplicates within same extraction
+          productCache.push({ id: productId, name_canonical: desc });
+          console.log("Product created:", desc, "->", productId);
+        }
+      }
+
+      items.push({
+        user_id: userId,
+        quote_id: quote.id,
+        product_canonical_id: productId,
+        description_supplier: desc,
+        qty: item.qty ?? null,
+        unit: item.unit ?? null,
+        unit_price: item.unit_price ?? null,
+        total_price: item.total_price ?? null,
+        needs_review: true,
+        confidence: { source: "ai-extraction" },
+        source_ref: { origin: "ai-extraction" },
+      });
+    }
 
     if (items.length > 0) {
       const { error: itemsErr } = await supabase
