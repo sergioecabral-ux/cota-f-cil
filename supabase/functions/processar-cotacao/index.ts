@@ -15,6 +15,19 @@ Se um campo não estiver disponível, use null.
 Para preços, use números decimais (ex: 12.50). Para quantidades, use números.
 O campo "unit" deve ser a unidade de medida (kg, un, cx, lt, m, etc).`;
 
+const toBase64 = (buffer: ArrayBuffer): string => {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -99,14 +112,21 @@ serve(async (req) => {
       }
 
       if (evidence.kind === "pdf") {
-        // For PDF, download and send as text description
+        const pdfResponse = await fetch(signedUrl.signedUrl);
+        if (!pdfResponse.ok) {
+          throw new Error(`Could not download PDF evidence file (${pdfResponse.status})`);
+        }
+
+        const pdfBuffer = await pdfResponse.arrayBuffer();
+        const pdfDataUrl = `data:application/pdf;base64,${toBase64(pdfBuffer)}`;
+
         userContent.push({
           type: "text",
-          text: `Analise o documento PDF desta cotação disponível na URL a seguir e extraia os dados estruturados.`,
+          text: "Analise este documento PDF de cotação e extraia os dados estruturados:",
         });
         userContent.push({
           type: "image_url",
-          image_url: { url: signedUrl.signedUrl },
+          image_url: { url: pdfDataUrl },
         });
       } else {
         // Image
