@@ -15,6 +15,19 @@ Se um campo não estiver disponível, use null.
 Para preços, use números decimais (ex: 12.50). Para quantidades, use números.
 O campo "unit" deve ser a unidade de medida (kg, un, cx, lt, m, etc).`;
 
+const toBase64 = (buffer: ArrayBuffer): string => {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
