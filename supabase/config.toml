@@ -1,1 +1,4 @@
 project_id = "uuewxwvifsktwmdylkyj"
+
+[functions.processar-cotacao]
+verify_jwt = false

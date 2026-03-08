@@ -207,35 +207,41 @@ const EventoDetalhe = () => {
 
   // (Revisão tab moved to RevisaoTab component)
 
-  // Reprocess single evidence
+  // Reprocess single evidence via AI edge function
   const reprocessMutation = useMutation({
     mutationFn: async (evidenceId: string) => {
-      const { error } = await supabase
+      // Reset status first
+      await supabase
         .from("evidence")
         .update({ processing_status: "queued", processing_error: null })
         .eq("id", evidenceId);
+
+      const { data, error } = await supabase.functions.invoke(
+        "processar-cotacao",
+        { body: { evidence_id: evidenceId } }
+      );
       if (error) throw error;
+      if (data?.error) throw new Error(data.error);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["event-evidence", id] });
-      toast({ title: "Evidência reenfileirada" });
+      queryClient.invalidateQueries({ queryKey: ["revisao-quotes", id] });
+      queryClient.invalidateQueries({ queryKey: ["revisao-items", id] });
+      toast({ title: "Evidência processada com IA" });
     },
     onError: (err: any) => {
       toast({ title: "Erro", description: err.message, variant: "destructive" });
     },
   });
 
-  // Real "Processar tudo"
+  // Real "Processar tudo" — calls edge function with AI extraction
   const processAllMutation = useMutation({
     mutationFn: async () => {
       if (!id) return 0;
 
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Usuário não autenticado");
-
       const { data: toProcess, error } = await supabase
         .from("evidence")
-        .select("id, supplier_id, created_at, kind")
+        .select("id")
         .eq("event_id", id)
         .in("kind", ["image", "pdf", "text"])
         .eq("functional_label", "quote")
@@ -243,65 +249,31 @@ const EventoDetalhe = () => {
       if (error) throw error;
       if (!toProcess || toProcess.length === 0) return 0;
 
-      let fallbackSupplierId: string | null = null;
-      const needsFallback = toProcess.some((e) => !e.supplier_id);
-      if (needsFallback) {
-        const { data: existing } = await supabase
-          .from("suppliers")
-          .select("id")
-          .eq("name_raw", "Desconhecido")
-          .eq("user_id", user.id)
-          .limit(1);
+      let processed = 0;
+      const errors: string[] = [];
 
-        if (existing && existing.length > 0) {
-          fallbackSupplierId = existing[0].id;
-        } else {
-          const { data: created, error: createErr } = await supabase
-            .from("suppliers")
-            .insert({ name_raw: "Desconhecido", user_id: user.id, status_review: false })
-            .select("id")
-            .single();
-          if (createErr) throw createErr;
-          fallbackSupplierId = created.id;
+      for (const ev of toProcess) {
+        try {
+          const { data, error: fnErr } = await supabase.functions.invoke(
+            "processar-cotacao",
+            { body: { evidence_id: ev.id } }
+          );
+          if (fnErr) throw fnErr;
+          if (data?.error) throw new Error(data.error);
+          processed++;
+        } catch (err: any) {
+          console.error(`Error processing evidence ${ev.id}:`, err);
+          errors.push(err.message || "Erro desconhecido");
+          // Mark as failed
+          await supabase
+            .from("evidence")
+            .update({ processing_status: "failed", processing_error: err.message })
+            .eq("id", ev.id);
         }
       }
 
-      let processed = 0;
-
-      for (const ev of toProcess) {
-        const supplierId = ev.supplier_id || fallbackSupplierId!;
-
-        const evDate = format(new Date(ev.created_at), "dd/MM HH:mm");
-        const displayName = `Cotação ${evDate} (${ev.kind})`;
-
-        const { data: quote, error: qErr } = await supabase
-          .from("quotes")
-          .insert({
-            event_id: id,
-            supplier_id: supplierId,
-            evidence_id: ev.id,
-            needs_review: true,
-            confidence_overall: 0,
-            user_id: user.id,
-            display_name: displayName,
-          })
-          .select("id")
-          .single();
-        if (qErr) throw qErr;
-
-        const { error: rqErr } = await supabase.from("review_queue").insert([
-          { event_id: id, entity_type: "quote", entity_id: quote.id, severity: "critical", reason: "Prazo de entrega ausente", user_id: user.id },
-          { event_id: id, entity_type: "quote", entity_id: quote.id, severity: "critical", reason: "Frete ausente", user_id: user.id },
-          { event_id: id, entity_type: "quote", entity_id: quote.id, severity: "high", reason: "Pedido mínimo ausente", user_id: user.id },
-        ]);
-        if (rqErr) throw rqErr;
-
-        await supabase
-          .from("evidence")
-          .update({ processing_status: "done", processing_error: null })
-          .eq("id", ev.id);
-
-        processed++;
+      if (errors.length > 0 && processed === 0) {
+        throw new Error(`Falha ao processar: ${errors[0]}`);
       }
 
       return processed;
