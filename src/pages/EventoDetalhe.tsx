@@ -207,18 +207,27 @@ const EventoDetalhe = () => {
 
   // (Revisão tab moved to RevisaoTab component)
 
-  // Reprocess single evidence
+  // Reprocess single evidence via AI edge function
   const reprocessMutation = useMutation({
     mutationFn: async (evidenceId: string) => {
-      const { error } = await supabase
+      // Reset status first
+      await supabase
         .from("evidence")
         .update({ processing_status: "queued", processing_error: null })
         .eq("id", evidenceId);
+
+      const { data, error } = await supabase.functions.invoke(
+        "processar-cotacao",
+        { body: { evidence_id: evidenceId } }
+      );
       if (error) throw error;
+      if (data?.error) throw new Error(data.error);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["event-evidence", id] });
-      toast({ title: "Evidência reenfileirada" });
+      queryClient.invalidateQueries({ queryKey: ["revisao-quotes", id] });
+      queryClient.invalidateQueries({ queryKey: ["revisao-items", id] });
+      toast({ title: "Evidência processada com IA" });
     },
     onError: (err: any) => {
       toast({ title: "Erro", description: err.message, variant: "destructive" });
