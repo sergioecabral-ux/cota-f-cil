@@ -23,8 +23,8 @@ export function AppSidebar() {
   return (
     <Sidebar className="border-r border-border">
       <div className="h-16 flex items-center px-6 border-b border-border">
-        <span className="text-lg font-bold text-foreground tracking-tight">
-          Cota<span className="text-accent">Fácil</span>
+        <span className="text-lg font-bold tracking-tight text-foreground">
+          Cota<span className="text-primary">Fácil</span>
         </span>
       </div>
       <SidebarContent className="pt-4">
@@ -38,7 +38,7 @@ export function AppSidebar() {
                       to={item.url}
                       end={item.url === "/"}
                       className="flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
-                      activeClassName="bg-accent/10 text-accent font-semibold"
+                      activeClassName="bg-primary/10 text-primary font-semibold"
                     >
                       <item.icon className="h-5 w-5 shrink-0" />
                       <span>{item.title}</span>

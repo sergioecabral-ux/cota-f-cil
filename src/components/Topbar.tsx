@@ -16,7 +16,7 @@ const Topbar = ({ title }: TopbarProps) => {
         <button className="p-2 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors">
           <Bell className="h-5 w-5" />
         </button>
-        <button className="h-9 w-9 rounded-full bg-accent/10 flex items-center justify-center text-accent">
+        <button className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center text-primary">
           <User className="h-5 w-5" />
         </button>
       </div>
