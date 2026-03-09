@@ -11,8 +11,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "@/hooks/use-toast";
-import { Upload, FileText, Archive, AlertTriangle, ArrowLeft, FolderOpen, ClipboardCheck, CheckCircle2, Info } from "lucide-react";
+import { Upload, FileText, Archive, AlertTriangle, ArrowLeft, FolderOpen, ClipboardCheck, CheckCircle2, Info, Trash2 } from "lucide-react";
 import { format } from "date-fns";
+import DeleteConfirmDialog from "@/components/DeleteConfirmDialog";
 
 const ACCEPT_FILES = ".pdf,.jpg,.jpeg,.png";
 const ACCEPT_ZIP = ".zip";
@@ -35,6 +36,23 @@ const ImportarEvidencias = () => {
   const [dragOverZip, setDragOverZip] = useState(false);
   const [viewEvidence, setViewEvidence] = useState<any | null>(null);
   const [showSuccessCard, setShowSuccessCard] = useState(false);
+  const [deleteEvidenceId, setDeleteEvidenceId] = useState<string | null>(null);
+
+  // Delete evidence mutation
+  const deleteEvidence = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("evidence").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["evidence", eventId] });
+      setDeleteEvidenceId(null);
+      toast({ title: "Evidência excluída" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
+    },
+  });
 
   // Fetch events
   const { data: events } = useQuery({
@@ -507,13 +525,23 @@ const ImportarEvidencias = () => {
                               {ev.processing_error || "—"}
                             </TableCell>
                             <TableCell>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleView(ev)}
-                              >
-                                Ver
-                              </Button>
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleView(ev)}
+                                >
+                                  Ver
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                  onClick={() => setDeleteEvidenceId(ev.id)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -542,6 +570,14 @@ const ImportarEvidencias = () => {
           </pre>
         </DialogContent>
       </Dialog>
+
+      <DeleteConfirmDialog
+        open={!!deleteEvidenceId}
+        onOpenChange={(open) => !open && setDeleteEvidenceId(null)}
+        onConfirm={() => deleteEvidenceId && deleteEvidence.mutate(deleteEvidenceId)}
+        isPending={deleteEvidence.isPending}
+        description="A evidência será removida permanentemente. Esta ação não pode ser desfeita."
+      />
     </>
   );
 };

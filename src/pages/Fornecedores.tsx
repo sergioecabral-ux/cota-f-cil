@@ -1,12 +1,19 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import Topbar from "@/components/Topbar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Phone } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Phone, Trash2 } from "lucide-react";
+import { toast } from "@/hooks/use-toast";
+import DeleteConfirmDialog from "@/components/DeleteConfirmDialog";
 
 const Fornecedores = () => {
+  const queryClient = useQueryClient();
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+
   const { data: suppliers, isLoading } = useQuery({
     queryKey: ["suppliers"],
     queryFn: async () => {
@@ -16,6 +23,21 @@ const Fornecedores = () => {
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("suppliers").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["suppliers"] });
+      setDeleteId(null);
+      toast({ title: "Fornecedor excluído" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
     },
   });
 
@@ -44,6 +66,7 @@ const Fornecedores = () => {
                     <TableHead>Telefone</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Criado em</TableHead>
+                    <TableHead className="w-10"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -66,6 +89,16 @@ const Fornecedores = () => {
                       <TableCell className="text-muted-foreground text-sm">
                         {new Date(s.created_at).toLocaleDateString("pt-BR")}
                       </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => setDeleteId(s.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -74,6 +107,14 @@ const Fornecedores = () => {
           )}
         </div>
       </div>
+
+      <DeleteConfirmDialog
+        open={!!deleteId}
+        onOpenChange={(open) => !open && setDeleteId(null)}
+        onConfirm={() => deleteId && deleteMutation.mutate(deleteId)}
+        isPending={deleteMutation.isPending}
+        description="O fornecedor será removido permanentemente. Esta ação não pode ser desfeita."
+      />
     </>
   );
 };

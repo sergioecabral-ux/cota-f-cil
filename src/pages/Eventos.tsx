@@ -12,8 +12,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
-import { Plus, MoreHorizontal, Pencil, XCircle, AlertTriangle } from "lucide-react";
+import { Plus, MoreHorizontal, Pencil, XCircle, AlertTriangle, Trash2 } from "lucide-react";
 import { format } from "date-fns";
+import DeleteConfirmDialog from "@/components/DeleteConfirmDialog";
 
 type EventRow = {
   id: string;
@@ -59,6 +60,7 @@ const Eventos = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<EventRow | null>(null);
   const [form, setForm] = useState<FormData>({ title: "", status: "open", priority: "medium" });
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   // Fetch events + pendencias count
   const { data: events, isLoading } = useQuery({
@@ -163,6 +165,22 @@ const Eventos = () => {
     },
     onError: (err: any) => {
       toast({ title: "Erro", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // Delete event
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("events").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["events-list"] });
+      setDeleteId(null);
+      toast({ title: "Evento excluído" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
     },
   });
 
@@ -291,6 +309,9 @@ const Eventos = () => {
                                 <XCircle className="h-4 w-4 mr-2" /> Fechar
                               </DropdownMenuItem>
                             )}
+                            <DropdownMenuItem className="text-destructive" onClick={() => setDeleteId(ev.id)}>
+                              <Trash2 className="h-4 w-4 mr-2" /> Excluir
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -355,6 +376,14 @@ const Eventos = () => {
           </form>
         </DialogContent>
       </Dialog>
+
+      <DeleteConfirmDialog
+        open={!!deleteId}
+        onOpenChange={(open) => !open && setDeleteId(null)}
+        onConfirm={() => deleteId && deleteMutation.mutate(deleteId)}
+        isPending={deleteMutation.isPending}
+        description="O evento e todos os dados associados serão removidos. Esta ação não pode ser desfeita."
+      />
     </>
   );
 };
