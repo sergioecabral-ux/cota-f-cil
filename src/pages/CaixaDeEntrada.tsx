@@ -1,10 +1,14 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import Topbar from "@/components/Topbar";
-import { AlertTriangle, ShieldAlert } from "lucide-react";
+import { AlertTriangle, ShieldAlert, Trash2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { Button } from "@/components/ui/button";
+import { toast } from "@/hooks/use-toast";
+import DeleteConfirmDialog from "@/components/DeleteConfirmDialog";
 
 const severityBadge: Record<string, string> = {
   critical: "bg-destructive/15 text-destructive border-destructive/30",
@@ -14,8 +18,9 @@ const severityBadge: Record<string, string> = {
 
 const CaixaDeEntrada = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
-  // Fetch open critical review items with event titles
   const { data: criticalItems = [], isLoading } = useQuery({
     queryKey: ["inbox-criticals"],
     queryFn: async () => {
@@ -29,7 +34,6 @@ const CaixaDeEntrada = () => {
       if (error) throw error;
       if (!data || data.length === 0) return [];
 
-      // Fetch event titles
       const eventIds = [...new Set(data.map((r) => r.event_id))];
       const { data: events } = await supabase
         .from("events")
@@ -45,7 +49,6 @@ const CaixaDeEntrada = () => {
     },
   });
 
-  // Counts
   const { data: totalCritical = 0 } = useQuery({
     queryKey: ["inbox-critical-count"],
     queryFn: async () => {
@@ -72,12 +75,28 @@ const CaixaDeEntrada = () => {
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("review_queue").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["inbox-criticals"] });
+      queryClient.invalidateQueries({ queryKey: ["inbox-critical-count"] });
+      queryClient.invalidateQueries({ queryKey: ["inbox-high-count"] });
+      setDeleteId(null);
+      toast({ title: "Item excluído" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
+    },
+  });
+
   return (
     <>
       <Topbar title="Caixa de Entrada" />
       <div className="flex-1 p-6">
         <div className="max-w-4xl mx-auto">
-          {/* Stats */}
           <div className="grid grid-cols-2 gap-4 mb-8">
             <div className="bg-card rounded-xl border border-border p-5 shadow-card">
               <p className="text-sm text-muted-foreground mb-1">Críticas abertas</p>
@@ -89,7 +108,6 @@ const CaixaDeEntrada = () => {
             </div>
           </div>
 
-          {/* Critical items list */}
           <div className="bg-card rounded-xl border border-border shadow-card overflow-hidden">
             <div className="px-5 py-4 border-b border-border flex items-center gap-2">
               <ShieldAlert className="h-4 w-4 text-destructive" />
@@ -102,19 +120,35 @@ const CaixaDeEntrada = () => {
                 {criticalItems.map((item) => (
                   <li
                     key={item.id}
-                    className="px-5 py-4 flex items-center gap-4 hover:bg-secondary/50 transition-colors cursor-pointer"
-                    onClick={() => navigate(`/events/${item.event_id}?criticas=1`)}
+                    className="px-5 py-4 flex items-center gap-4 hover:bg-secondary/50 transition-colors"
                   >
-                    <div className="h-10 w-10 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0">
+                    <div
+                      className="h-10 w-10 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0 cursor-pointer"
+                      onClick={() => navigate(`/events/${item.event_id}?criticas=1`)}
+                    >
                       <AlertTriangle className="h-5 w-5 text-destructive" />
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div
+                      className="flex-1 min-w-0 cursor-pointer"
+                      onClick={() => navigate(`/events/${item.event_id}?criticas=1`)}
+                    >
                       <p className="text-sm font-medium text-foreground truncate">{item.reason}</p>
                       <p className="text-xs text-muted-foreground">{item.event_title}</p>
                     </div>
                     <span className="text-xs text-muted-foreground whitespace-nowrap">
                       {formatDistanceToNow(new Date(item.created_at), { addSuffix: true, locale: ptBR })}
                     </span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteId(item.id);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </li>
                 ))}
               </ul>
@@ -126,6 +160,14 @@ const CaixaDeEntrada = () => {
           </div>
         </div>
       </div>
+
+      <DeleteConfirmDialog
+        open={!!deleteId}
+        onOpenChange={(open) => !open && setDeleteId(null)}
+        onConfirm={() => deleteId && deleteMutation.mutate(deleteId)}
+        isPending={deleteMutation.isPending}
+        description="O item será removido da fila de revisão. Esta ação não pode ser desfeita."
+      />
     </>
   );
 };

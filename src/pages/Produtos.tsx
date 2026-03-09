@@ -1,11 +1,19 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import Topbar from "@/components/Topbar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { Trash2 } from "lucide-react";
+import { toast } from "@/hooks/use-toast";
+import DeleteConfirmDialog from "@/components/DeleteConfirmDialog";
 
 const Produtos = () => {
+  const queryClient = useQueryClient();
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+
   const { data: products, isLoading } = useQuery({
     queryKey: ["products_canonical"],
     queryFn: async () => {
@@ -15,6 +23,21 @@ const Produtos = () => {
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("products_canonical").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["products_canonical"] });
+      setDeleteId(null);
+      toast({ title: "Produto excluído" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" });
     },
   });
 
@@ -42,6 +65,7 @@ const Produtos = () => {
                     <TableHead>Unidade Padrão</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Criado em</TableHead>
+                    <TableHead className="w-10"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -57,6 +81,16 @@ const Produtos = () => {
                       <TableCell className="text-muted-foreground text-sm">
                         {new Date(p.created_at).toLocaleDateString("pt-BR")}
                       </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => setDeleteId(p.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -65,6 +99,14 @@ const Produtos = () => {
           )}
         </div>
       </div>
+
+      <DeleteConfirmDialog
+        open={!!deleteId}
+        onOpenChange={(open) => !open && setDeleteId(null)}
+        onConfirm={() => deleteId && deleteMutation.mutate(deleteId)}
+        isPending={deleteMutation.isPending}
+        description="O produto será removido permanentemente. Esta ação não pode ser desfeita."
+      />
     </>
   );
 };
